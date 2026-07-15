@@ -1,0 +1,48 @@
+{
+  "name": "ultimate-seo",
+  "version": "0.1.0",
+  "tablePrefix": "seo_",
+  "description": "The one-stop SEO command centre for Cactus: site-wide SEO scoring, page-by-page analysis with one-click fixes, a full site crawl audit, sitemap and robots controls, and structured data blocks for the page builder.",
+  "requiresCoreVersion": "0.5.436",
+  "permissions": [
+    "seo.view",
+    "seo.manage"
+  ],
+  "navGroupLabel": "SEO",
+  "navEntries": [
+    { "label": "Dashboard", "path": "/m/ultimate-seo", "icon": "<path d=\"M3 3v18h18\"/><path d=\"m7 13 4-4 4 3 5-6\"/>", "permission": "seo.view" },
+    { "label": "Pages", "path": "/m/ultimate-seo/pages", "icon": "<path d=\"M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z\"/><path d=\"M14 2v6h6\"/>", "permission": "seo.view" },
+    { "label": "Site audit", "path": "/m/ultimate-seo/audit", "icon": "<circle cx=\"11\" cy=\"11\" r=\"7\"/><path d=\"m21 21-4.35-4.35\"/><path d=\"M11 8v3l2 2\"/>", "permission": "seo.view" },
+    { "label": "Sitemap & robots", "path": "/m/ultimate-seo/indexing", "icon": "<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M3 12h18\"/><path d=\"M12 3a15 15 0 0 1 0 18\"/><path d=\"M12 3a15 15 0 0 0 0 18\"/>", "permission": "seo.manage" }
+  ],
+  "settingsTabs": [
+    { "id": "ultimate-seo", "label": "SEO", "permission": "seo.manage", "import": "./components/admin/SettingsTab", "component": "UltimateSeoSettingsTab" }
+  ],
+  "requiredEnvVars": [],
+  "cookieCategories": [],
+  "teardown": [
+    "seo_settings",
+    "seo_page_meta",
+    "seo_audit_runs",
+    "seo_audit_issues",
+    "seo_robots_rules",
+    "seo_sitemap_entries"
+  ],
+  "cronJobs": [
+    { "path": "/api/m/ultimate-seo/cron/audit", "schedule": "0 4 * * 1" }
+  ],
+  "puckBlocks": [
+    {
+      "type": "SeoStructuredData",
+      "import": "./components/puck/StructuredDataBlock",
+      "component": "structuredDataPuckComponent",
+      "rscComponent": "structuredDataPuckRscComponent"
+    },
+    {
+      "type": "SeoFaq",
+      "import": "./components/puck/FaqBlock",
+      "component": "seoFaqPuckComponent",
+      "rscComponent": "seoFaqPuckRscComponent"
+    }
+  ]
+}
