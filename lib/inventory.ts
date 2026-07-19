@@ -4,6 +4,7 @@
 // works identically whether or not gazette/shop/directory are present.
 
 import { prisma } from '@/lib/db/prisma'
+import { INSTALLED_MODULE_WHERE } from '@/lib/modules/live-status'
 import { getAllPageMeta } from './db'
 import type { EntityType, InventoryItem, SeoCheck } from './types'
 
@@ -11,7 +12,7 @@ type RawItem = Omit<InventoryItem, 'focusKeyword' | 'score' | 'checks' | 'analyz
 
 async function getActiveModuleNames(): Promise<Set<string>> {
   const rows = await prisma.module.findMany({
-    where: { status: { in: ['active', 'update_available'] } },
+    where: { ...INSTALLED_MODULE_WHERE },
     select: { name: true },
   })
   return new Set(rows.map((r) => r.name))
