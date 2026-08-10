@@ -26,7 +26,7 @@ function StatCard({ label, value, tone }: { label: string; value: string | numbe
   return (
     <div className="card" style={{ padding: '1rem', minWidth: 0 }}>
       <div style={{ fontSize: '1.5rem', fontWeight: 600, color }}>{value}</div>
-      <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>{label}</div>
+      <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-secondary)' }}>{label}</div>
     </div>
   )
 }
@@ -45,7 +45,7 @@ export default function DashboardClient({ adminPath }: { adminPath: string }) {
   }, [])
 
   if (error) return <div className="alert alert-danger">{error}</div>
-  if (!data) return <p style={{ color: 'var(--color-text-muted)' }}>Sizing up the site…</p>
+  if (!data) return <p style={{ color: 'var(--color-text-secondary)' }}>Sizing up the site…</p>
 
   const t = data.totals
   const base = `/${adminPath}`
@@ -84,7 +84,7 @@ export default function DashboardClient({ adminPath }: { adminPath: string }) {
         <div className="card" style={{ padding: '1rem' }}>
           <h2 className="card-title" style={{ marginBottom: '0.75rem' }}>Quick wins</h2>
           {data.quickWins.length === 0 ? (
-            <p style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>
+            <p style={{ fontSize: '0.8125rem', color: 'var(--color-text-secondary)' }}>
               Nothing analysed yet. Head to the Pages screen and run the analyser - it is quite keen.
             </p>
           ) : (
@@ -104,14 +104,14 @@ export default function DashboardClient({ adminPath }: { adminPath: string }) {
         <div className="card" style={{ padding: '1rem' }}>
           <h2 className="card-title" style={{ marginBottom: '0.75rem' }}>Recent site audits</h2>
           {data.latestRuns.length === 0 ? (
-            <p style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>
+            <p style={{ fontSize: '0.8125rem', color: 'var(--color-text-secondary)' }}>
               No crawls yet. The Site audit screen will happily go and knock on every page for you.
             </p>
           ) : (
             <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
               {data.latestRuns.map((run) => (
                 <li key={run.id} style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', fontSize: '0.8125rem' }}>
-                  <span style={{ color: 'var(--color-text-muted)' }}>{new Date(run.started_at).toLocaleString()}</span>
+                  <span style={{ color: 'var(--color-text-secondary)' }}>{new Date(run.started_at).toLocaleString()}</span>
                   <span>
                     {run.pages_crawled}/{run.pages_total} pages
                     {run.summary ? ` · ${run.summary.errors} errors, ${run.summary.warnings} warnings` : ''}

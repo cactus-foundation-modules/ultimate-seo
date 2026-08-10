@@ -36,7 +36,7 @@ export const labelStyle: React.CSSProperties = {
 
 export const helpStyle: React.CSSProperties = {
   fontSize: '0.75rem',
-  color: 'var(--color-text-muted)',
+  color: 'var(--color-text-secondary)',
   margin: '0.25rem 0 0',
 }
 
@@ -44,11 +44,11 @@ export const helpStyle: React.CSSProperties = {
 export function SerpPreview({ title, description, url }: { title: string; description: string | null; url: string }) {
   return (
     <div style={{ border: '1px solid var(--color-border)', borderRadius: 8, padding: '0.75rem 1rem', background: 'var(--color-bg)' }}>
-      <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{url}</div>
+      <div style={{ fontSize: '0.75rem', color: 'var(--color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{url}</div>
       <div style={{ fontSize: '1.05rem', color: 'var(--color-primary)', lineHeight: 1.3, margin: '0.15rem 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {title.length > 60 ? `${title.slice(0, 60)}…` : title || '(no title)'}
       </div>
-      <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)', lineHeight: 1.4 }}>
+      <div style={{ fontSize: '0.8125rem', color: 'var(--color-text-secondary)', lineHeight: 1.4 }}>
         {description
           ? (description.length > 160 ? `${description.slice(0, 160)}…` : description)
           : <em>No meta description - search engines will improvise, and they are not known for their copywriting.</em>}

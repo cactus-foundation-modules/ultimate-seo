@@ -104,7 +104,7 @@ export default function IndexingClient() {
     }
   }
 
-  if (loading) return <p style={{ color: 'var(--color-text-muted)' }}>Loading indexing rules…</p>
+  if (loading) return <p style={{ color: 'var(--color-text-secondary)' }}>Loading indexing rules…</p>
 
   return (
     <div>
@@ -132,7 +132,7 @@ export default function IndexingClient() {
                 <li key={rule.id} style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', alignItems: 'center', fontSize: '0.8125rem' }}>
                   <span>
                     <code>{rule.path}</code>
-                    {rule.note && <span style={{ color: 'var(--color-text-muted)' }}> - {rule.note}</span>}
+                    {rule.note && <span style={{ color: 'var(--color-text-secondary)' }}> - {rule.note}</span>}
                   </span>
                   <button className="btn btn-ghost btn-sm" onClick={() => deleteRule(rule.id)} disabled={busy} aria-label={`Remove ${rule.path}`}>Remove</button>
                 </li>
@@ -160,7 +160,7 @@ export default function IndexingClient() {
                 <li key={entry.id} style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', alignItems: 'center', fontSize: '0.8125rem' }}>
                   <span>
                     <code>{entry.path}</code>
-                    <span style={{ color: 'var(--color-text-muted)' }}>
+                    <span style={{ color: 'var(--color-text-secondary)' }}>
                       {entry.priority !== null ? ` · priority ${entry.priority}` : ''}
                       {entry.change_freq ? ` · ${entry.change_freq}` : ''}
                     </span>

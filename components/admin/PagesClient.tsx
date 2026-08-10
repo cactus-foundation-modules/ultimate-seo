@@ -64,7 +64,7 @@ export default function PagesClient({ adminPath, canManage }: { adminPath: strin
   const availableTypes = useMemo(() => [...new Set(items.map((i) => i.entityType))], [items])
   const selected = items.find((i) => `${i.entityType}:${i.entityId}` === selectedKey) ?? null
 
-  if (loading) return <p style={{ color: 'var(--color-text-muted)' }}>Rounding up every page on the site…</p>
+  if (loading) return <p style={{ color: 'var(--color-text-secondary)' }}>Rounding up every page on the site…</p>
   if (error) return <div className="alert alert-danger">{error}</div>
 
   return (
@@ -93,7 +93,7 @@ export default function PagesClient({ adminPath, canManage }: { adminPath: strin
         <div className="table-wrapper">
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
             <thead>
-              <tr style={{ textAlign: 'left', color: 'var(--color-text-muted)' }}>
+              <tr style={{ textAlign: 'left', color: 'var(--color-text-secondary)' }}>
                 <th style={{ padding: '0.5rem' }}>Title</th>
                 <th style={{ padding: '0.5rem' }}>Type</th>
                 <th style={{ padding: '0.5rem' }}>Status</th>
@@ -112,7 +112,7 @@ export default function PagesClient({ adminPath, canManage }: { adminPath: strin
                   >
                     <td style={{ padding: '0.5rem', maxWidth: 280 }}>
                       <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 500 }}>{item.title || '(untitled)'}</div>
-                      <div style={{ color: 'var(--color-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.url}</div>
+                      <div style={{ color: 'var(--color-text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.url}</div>
                     </td>
                     <td style={{ padding: '0.5rem', whiteSpace: 'nowrap' }}>{TYPE_LABELS[item.entityType] ?? item.entityType}</td>
                     <td style={{ padding: '0.5rem' }}>
@@ -128,7 +128,7 @@ export default function PagesClient({ adminPath, canManage }: { adminPath: strin
                 )
               })}
               {filtered.length === 0 && (
-                <tr><td colSpan={5} style={{ padding: '1rem', color: 'var(--color-text-muted)' }}>Nothing matches that filter.</td></tr>
+                <tr><td colSpan={5} style={{ padding: '1rem', color: 'var(--color-text-secondary)' }}>Nothing matches that filter.</td></tr>
               )}
             </tbody>
           </table>
@@ -293,7 +293,7 @@ function DetailPanel({ item, adminPath, canManage, onClose, onChanged }: {
               <StatusDot status={check.status} />
               <div>
                 <div>{check.message}</div>
-                {check.suggestion && <div style={{ color: 'var(--color-text-muted)' }}>{check.suggestion}</div>}
+                {check.suggestion && <div style={{ color: 'var(--color-text-secondary)' }}>{check.suggestion}</div>}
               </div>
             </li>
           ))}

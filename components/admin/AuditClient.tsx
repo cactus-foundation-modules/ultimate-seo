@@ -79,7 +79,7 @@ export default function AuditClient({ canManage }: { canManage: boolean }) {
     }
   }
 
-  if (loading) return <p style={{ color: 'var(--color-text-muted)' }}>Fetching audit history…</p>
+  if (loading) return <p style={{ color: 'var(--color-text-secondary)' }}>Fetching audit history…</p>
 
   return (
     <div>
@@ -92,7 +92,7 @@ export default function AuditClient({ canManage }: { canManage: boolean }) {
         )}
       </div>
 
-      <p style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
+      <p style={{ fontSize: '0.8125rem', color: 'var(--color-text-secondary)', marginBottom: '1rem' }}>
         The audit visits your published pages the same way a search engine does and reports what it finds -
         it also runs itself weekly, so the history below fills up on its own.
       </p>
@@ -100,7 +100,7 @@ export default function AuditClient({ canManage }: { canManage: boolean }) {
       {error && <div className="alert alert-danger" style={{ marginBottom: '1rem' }}>{error}</div>}
 
       {runs.length === 0 ? (
-        <div className="card" style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>
+        <div className="card" style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--color-text-secondary)', fontSize: '0.875rem' }}>
           No audits yet. Press the button and let the crawler stretch its legs.
         </div>
       ) : (
@@ -116,7 +116,7 @@ export default function AuditClient({ canManage }: { canManage: boolean }) {
               >
                 <span style={{ fontSize: '0.8125rem' }}>
                   <strong>{new Date(run.started_at).toLocaleString()}</strong>
-                  <span style={{ color: 'var(--color-text-muted)' }}> · {run.trigger === 'cron' ? 'scheduled' : 'manual'} · {run.pages_crawled}/{run.pages_total} pages</span>
+                  <span style={{ color: 'var(--color-text-secondary)' }}> · {run.trigger === 'cron' ? 'scheduled' : 'manual'} · {run.pages_crawled}/{run.pages_total} pages</span>
                 </span>
                 <span style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.8125rem' }}>
                   {run.summary && (
@@ -133,14 +133,14 @@ export default function AuditClient({ canManage }: { canManage: boolean }) {
               {openRun === run.id && (
                 <div style={{ marginTop: '0.75rem', borderTop: '1px solid var(--color-border)', paddingTop: '0.75rem' }}>
                   {!runIssues ? (
-                    <p style={{ fontSize: '0.8125rem', color: 'var(--color-text-muted)' }}>Loading issues…</p>
+                    <p style={{ fontSize: '0.8125rem', color: 'var(--color-text-secondary)' }}>Loading issues…</p>
                   ) : runIssues.length === 0 ? (
                     <p style={{ fontSize: '0.8125rem', color: 'var(--color-success)' }}>Not a single issue. Frame this.</p>
                   ) : (
                     <div className="table-wrapper">
                       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
                         <thead>
-                          <tr style={{ textAlign: 'left', color: 'var(--color-text-muted)' }}>
+                          <tr style={{ textAlign: 'left', color: 'var(--color-text-secondary)' }}>
                             <th style={{ padding: '0.375rem' }}>Severity</th>
                             <th style={{ padding: '0.375rem' }}>Page</th>
                             <th style={{ padding: '0.375rem' }}>Issue</th>

@@ -66,7 +66,7 @@ export function UltimateSeoSettingsTab() {
   }
 
   if (error && !settings) return <div className="alert alert-danger">{error}</div>
-  if (!settings) return <p style={{ color: 'var(--color-text-muted)' }}>Loading SEO settings…</p>
+  if (!settings) return <p style={{ color: 'var(--color-text-secondary)' }}>Loading SEO settings…</p>
 
   const set = (patch: Partial<Settings>) => setSettings({ ...settings, ...patch })
 
