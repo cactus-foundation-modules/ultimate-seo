@@ -1,5 +1,6 @@
 import { getSessionFromCookie } from '@/lib/auth/session'
 import { hasPermission } from '@/lib/permissions/check'
+import SeoNav from '@/modules/ultimate-seo/components/admin/SeoNav'
 import PagesClient from '@/modules/ultimate-seo/components/admin/PagesClient'
 import { headers } from 'next/headers'
 
@@ -13,5 +14,10 @@ export default async function SeoPagesPage() {
   }
   const canManage = await hasPermission(user, 'seo.manage')
   const adminPath = (await headers()).get('x-cactus-admin-path') ?? ''
-  return <PagesClient adminPath={adminPath} canManage={canManage} />
+  return (
+    <div>
+      <SeoNav canManage={canManage} />
+      <PagesClient adminPath={adminPath} canManage={canManage} />
+    </div>
+  )
 }

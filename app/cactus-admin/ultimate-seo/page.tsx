@@ -1,5 +1,6 @@
 import { getSessionFromCookie } from '@/lib/auth/session'
 import { hasPermission } from '@/lib/permissions/check'
+import SeoNav from '@/modules/ultimate-seo/components/admin/SeoNav'
 import DashboardClient from '@/modules/ultimate-seo/components/admin/DashboardClient'
 import { headers } from 'next/headers'
 
@@ -11,6 +12,12 @@ export default async function SeoDashboardPage() {
   if (!await hasPermission(user, 'seo.view')) {
     return <div className="alert alert-danger">You do not have permission to view SEO data.</div>
   }
+  const canManage = await hasPermission(user, 'seo.manage')
   const adminPath = (await headers()).get('x-cactus-admin-path') ?? ''
-  return <DashboardClient adminPath={adminPath} />
+  return (
+    <div>
+      <SeoNav canManage={canManage} />
+      <DashboardClient adminPath={adminPath} />
+    </div>
+  )
 }
