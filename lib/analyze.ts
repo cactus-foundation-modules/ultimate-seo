@@ -17,6 +17,15 @@ export type AnalysisInput = {
   /** Meta descriptions of every other page, for duplicate detection. */
   otherDescriptions: string[]
   isPublished: boolean
+  /**
+   * True where the page's own template prints the title as the H1, so the
+   * heading exists on the rendered page without appearing in the analysed
+   * content. A product, a Gazette post and a Directory entry all work this way
+   * - their editable content is the description body, while the H1 is the name
+   * above it. A core page does not: every heading it has is one the author put
+   * in the builder, which is why this defaults to false.
+   */
+  titleIsH1?: boolean
 }
 
 const STOP_WORDS = new Set(['a', 'an', 'and', 'the', 'of', 'to', 'in', 'for', 'on', 'with', 'at', 'by', 'or'])
@@ -113,11 +122,18 @@ export function analyzePage(input: AnalysisInput): AnalysisResult {
   }
 
   // --- Content structure ---
+  // The template's own title heading counts: it is on the page a search engine
+  // reads, so a product whose name is printed as the H1 must not be told to go
+  // and add one. Counted alongside the content's own so a description that
+  // opens with its own H1 is still flagged as the second.
   const h1s = content.headings.filter((h) => h.level === 1)
-  if (h1s.length === 0) {
+  const h1Count = h1s.length + (input.titleIsH1 ? 1 : 0)
+  if (h1Count === 0) {
     checks.push(warn('h1-count', 'No top-level (H1) heading found in the page content.', 'Add exactly one main heading that says what the page is about.'))
-  } else if (h1s.length > 1) {
-    checks.push(warn('h1-count', `${h1s.length} top-level (H1) headings found - there should be exactly one.`, 'Demote the extra headings to H2.'))
+  } else if (h1Count > 1) {
+    checks.push(warn('h1-count', `${h1Count} top-level (H1) headings found - there should be exactly one.`, input.titleIsH1
+      ? 'The page already prints its name as the main heading, so demote the ones in the description to H2.'
+      : 'Demote the extra headings to H2.'))
   } else {
     checks.push(pass('h1-count', 'Exactly one top-level heading - textbook.'))
   }

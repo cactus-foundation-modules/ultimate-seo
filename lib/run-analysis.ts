@@ -17,6 +17,9 @@ export type EntityDetail = {
   hasOgImage: boolean
   isPublished: boolean
   content: ExtractedContent
+  /** See AnalysisInput.titleIsH1 - true for the module content types whose own
+   * template prints the title as the page's H1. */
+  titleIsH1?: boolean
 }
 
 async function loadCorePages(ids: string[]): Promise<Map<string, EntityDetail>> {
@@ -57,6 +60,8 @@ async function loadGazettePosts(ids: string[]): Promise<Map<string, EntityDetail
       hasOgImage: !!p.featured_image_id,
       isPublished: p.status === 'PUBLISHED',
       content: extractContent(p.builder_data),
+      // The post template prints the title as the page's H1.
+      titleIsH1: true,
     })
   }
   return out
@@ -66,10 +71,13 @@ async function loadShopProducts(ids: string[]): Promise<Map<string, EntityDetail
   const rows = await prisma.$queryRaw<Array<{
     id: string; name: string; slug: string; status: string; meta_title: string | null
     meta_description: string | null; short_description: string | null
-    description: string | null; og_image_id: string | null
+    description: string | null; og_image_id: string | null; photo_count: bigint
   }>>`
-    SELECT "id", "name", "slug", "status", "meta_title", "meta_description", "short_description", "description", "og_image_id"
-    FROM "shp_products" WHERE "id" = ANY(${ids}::text[])
+    SELECT p."id", p."name", p."slug", p."status", p."meta_title", p."meta_description",
+           p."short_description", p."description", p."og_image_id",
+           (SELECT COUNT(*) FROM "shp_product_media" m
+             WHERE m."product_id" = p."id" AND m."type" <> 'VIDEO_URL') AS photo_count
+    FROM "shp_products" p WHERE p."id" = ANY(${ids}::text[])
   `
   const out = new Map<string, EntityDetail>()
   for (const p of rows) {
@@ -79,9 +87,15 @@ async function loadShopProducts(ids: string[]): Promise<Map<string, EntityDetail
       title: p.meta_title || p.name,
       slug: p.slug,
       metaDescription: p.meta_description || p.short_description,
-      hasOgImage: !!p.og_image_id,
+      // A product page publishes its first photograph as the social image, so a
+      // product with pictures HAS one whether or not a dedicated social image
+      // was ever chosen - and nothing in the shop's editor sets og_image_id, so
+      // reading that column alone told every product on every shop it had none.
+      hasOgImage: !!p.og_image_id || Number(p.photo_count) > 0,
       isPublished: p.status === 'ACTIVE',
       content: extractContent({ content: [{ type: 'RichText', props: { html: p.description ?? p.short_description ?? '' } }] }),
+      // The product page prints the product's name as its H1.
+      titleIsH1: true,
     })
   }
   return out
@@ -103,6 +117,8 @@ async function loadDirectoryEntries(ids: string[]): Promise<Map<string, EntityDe
       hasOgImage: false,
       isPublished: e.status.toUpperCase() === 'PUBLISHED' || e.status.toLowerCase() === 'active',
       content: extractContent({ content: [{ type: 'RichText', props: { html: e.description ?? '' } }] }),
+      // The entry page prints the entry's name as its H1.
+      titleIsH1: true,
     })
   }
   return out
@@ -148,6 +164,7 @@ export async function runAnalysisFor(
     otherTitles: others.map((o) => o.title),
     otherDescriptions: others.map((o) => o.metaDescription ?? '').filter(Boolean),
     isPublished: entity.isPublished,
+    titleIsH1: entity.titleIsH1,
   })
 
   await upsertPageMeta({ entityType, entityId, focusKeyword, score: result.score, checks: result.checks })

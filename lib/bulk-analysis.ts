@@ -85,6 +85,7 @@ export async function analyzeBatch(keys: BulkKey[]): Promise<BulkAnalysisResult>
       otherTitles: titleDuplicated ? [entity.title] : [],
       otherDescriptions: descDuplicated && entity.metaDescription ? [entity.metaDescription] : [],
       isPublished: entity.isPublished,
+      titleIsH1: entity.titleIsH1,
     })
 
     analysed.push({ ...key, score: result.score })

@@ -18,6 +18,36 @@ async function getActiveModuleNames(): Promise<Set<string>> {
   return new Set(rows.map((r) => r.name))
 }
 
+// Both shop and gazette can serve their main content either under their own
+// prefix or straight off the site root, and the address this screen lists has
+// to be the one the page actually answers on - it is what an owner clicks, and
+// what every check here is notionally about. Read from each module's own
+// settings row rather than by importing its code, the same way the content
+// below is read: this module never hard-imports another's, so it works whether
+// or not either is installed. Either read failing falls back to the prefixed
+// form, which is every site's default and was this screen's only answer before.
+async function shopProductsAtRoot(): Promise<boolean> {
+  try {
+    const rows = await prisma.$queryRaw<Array<{ style: string | null }>>`
+      SELECT "config" ->> 'productUrlStyle' AS style FROM "shp_settings" WHERE "id" = 'singleton' LIMIT 1
+    `
+    return rows[0]?.style === 'ROOT'
+  } catch {
+    return false
+  }
+}
+
+async function gazettePostsAtRoot(): Promise<boolean> {
+  try {
+    const rows = await prisma.$queryRaw<Array<{ style: string | null }>>`
+      SELECT "post_url_style" AS style FROM "gz_settings" WHERE "id" = 'singleton' LIMIT 1
+    `
+    return rows[0]?.style === 'ROOT'
+  } catch {
+    return false
+  }
+}
+
 async function coreP(): Promise<RawItem[]> {
   const [pages, config] = await Promise.all([
     prisma.infoPage.findMany({
@@ -42,21 +72,24 @@ async function coreP(): Promise<RawItem[]> {
 }
 
 async function gazettePosts(): Promise<RawItem[]> {
-  const rows = await prisma.$queryRaw<Array<{
-    id: string; title: string; slug: string; status: string
-    seo_title: string | null; seo_description: string | null; excerpt: string | null
-    featured_image_id: string | null; updated_at: Date | null
-  }>>`
-    SELECT "id", "title", "slug", "status", "seo_title", "seo_description", "excerpt", "featured_image_id", "updated_at"
-    FROM "gz_posts" WHERE "is_private" = false
-    ORDER BY "published_at" DESC NULLS LAST
-  `
+  const [rows, atRoot] = await Promise.all([
+    prisma.$queryRaw<Array<{
+      id: string; title: string; slug: string; status: string
+      seo_title: string | null; seo_description: string | null; excerpt: string | null
+      featured_image_id: string | null; updated_at: Date | null
+    }>>`
+      SELECT "id", "title", "slug", "status", "seo_title", "seo_description", "excerpt", "featured_image_id", "updated_at"
+      FROM "gz_posts" WHERE "is_private" = false
+      ORDER BY "published_at" DESC NULLS LAST
+    `,
+    gazettePostsAtRoot(),
+  ])
   return rows.map((p) => ({
     entityType: 'gazette-post' as EntityType,
     entityId: p.id,
     title: p.seo_title || p.title,
     slug: p.slug,
-    url: `/gazette/${p.slug}`,
+    url: atRoot ? `/${p.slug}` : `/gazette/${p.slug}`,
     status: p.status.toLowerCase(),
     metaDescription: p.seo_description || p.excerpt,
     hasOgImage: !!p.featured_image_id,
@@ -67,24 +100,32 @@ async function gazettePosts(): Promise<RawItem[]> {
 }
 
 async function shopProducts(): Promise<RawItem[]> {
-  const rows = await prisma.$queryRaw<Array<{
-    id: string; name: string; slug: string; status: string
-    meta_title: string | null; meta_description: string | null; short_description: string | null
-    og_image_id: string | null; updated_at: Date
-  }>>`
-    SELECT "id", "name", "slug", "status", "meta_title", "meta_description", "short_description", "og_image_id", "updated_at"
-    FROM "shp_products" WHERE "catalogue_hidden" = false
-    ORDER BY "updated_at" DESC
-  `
+  const [rows, atRoot] = await Promise.all([
+    prisma.$queryRaw<Array<{
+      id: string; name: string; slug: string; status: string
+      meta_title: string | null; meta_description: string | null; short_description: string | null
+      og_image_id: string | null; updated_at: Date; photo_count: bigint
+    }>>`
+      SELECT p."id", p."name", p."slug", p."status", p."meta_title", p."meta_description",
+             p."short_description", p."og_image_id", p."updated_at",
+             (SELECT COUNT(*) FROM "shp_product_media" m
+               WHERE m."product_id" = p."id" AND m."type" <> 'VIDEO_URL') AS photo_count
+      FROM "shp_products" p WHERE p."catalogue_hidden" = false
+      ORDER BY p."updated_at" DESC
+    `,
+    shopProductsAtRoot(),
+  ])
   return rows.map((p) => ({
     entityType: 'shop-product' as EntityType,
     entityId: p.id,
     title: p.meta_title || p.name,
     slug: p.slug,
-    url: `/shop/products/${p.slug}`,
+    url: atRoot ? `/${p.slug}` : `/shop/products/${p.slug}`,
     status: p.status.toLowerCase() === 'active' ? 'published' : p.status.toLowerCase(),
     metaDescription: p.meta_description || p.short_description,
-    hasOgImage: !!p.og_image_id,
+    // Matches the product page's own answer: its first photograph is what gets
+    // published as the social image. See loadShopProducts in run-analysis.ts.
+    hasOgImage: !!p.og_image_id || Number(p.photo_count) > 0,
     editable: false,
     editPath: `/m/shop/products/${p.id}`,
     updatedAt: p.updated_at.toISOString(),
