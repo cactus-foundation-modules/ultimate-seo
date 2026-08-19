@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import type { InventoryItem, SeoCheck } from '@/modules/ultimate-seo/lib/types'
 import { API, ScoreBadge, SerpPreview, StatusDot, helpStyle, inputStyle, labelStyle } from './shared'
@@ -20,6 +20,14 @@ const EDIT_LABELS: Record<string, string> = {
 
 type AnalyzeResponse = { score: number; checks: SeoCheck[]; descriptionSuggestion: string | null }
 
+type BulkKey = { entityType: string; entityId: string }
+type BulkResponse = { analysed: Array<BulkKey & { score: number }>; missing: BulkKey[] }
+
+// Pages per request. Small enough that a request never approaches the module
+// route's 60s ceiling however big the catalogue gets, big enough that a few
+// hundred pages do not turn into a few hundred round trips.
+const BULK_CHUNK = 25
+
 export default function PagesClient({ adminPath, canManage }: { adminPath: string; canManage: boolean }) {
   const [items, setItems] = useState<InventoryItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -27,6 +35,12 @@ export default function PagesClient({ adminPath, canManage }: { adminPath: strin
   const [typeFilter, setTypeFilter] = useState('all')
   const [search, setSearch] = useState('')
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  const [bulkRunning, setBulkRunning] = useState(false)
+  const [bulkDone, setBulkDone] = useState(0)
+  const [bulkTotal, setBulkTotal] = useState(0)
+  const [bulkSummary, setBulkSummary] = useState('')
+  const [bulkError, setBulkError] = useState('')
+  const bulkAbort = useRef<AbortController | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -63,6 +77,58 @@ export default function PagesClient({ adminPath, canManage }: { adminPath: strin
 
   const availableTypes = useMemo(() => [...new Set(items.map((i) => i.entityType))], [items])
   const selected = items.find((i) => `${i.entityType}:${i.entityId}` === selectedKey) ?? null
+  const filtersActive = typeFilter !== 'all' || search.trim() !== ''
+  const bulkPct = bulkTotal ? Math.round((bulkDone / bulkTotal) * 100) : 0
+
+  // Walks whatever the filters currently show, a chunk per request, so the
+  // progress bar is real rather than a spinner with good intentions.
+  async function analyseAll() {
+    const targets = filtered.map((i) => ({ entityType: i.entityType, entityId: i.entityId }))
+    if (targets.length === 0 || bulkRunning) return
+
+    const controller = new AbortController()
+    bulkAbort.current = controller
+    setBulkRunning(true)
+    setBulkDone(0)
+    setBulkTotal(targets.length)
+    setBulkSummary('')
+    setBulkError('')
+
+    const scores: number[] = []
+    let missing = 0
+    try {
+      for (let start = 0; start < targets.length; start += BULK_CHUNK) {
+        const chunk = targets.slice(start, start + BULK_CHUNK)
+        const res = await fetch(`${API}/pages/analyze-bulk`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: chunk }),
+          signal: controller.signal,
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error ?? 'Bulk analysis failed')
+        const result = data as BulkResponse
+        for (const row of result.analysed) scores.push(row.score)
+        missing += result.missing.length
+        setBulkDone(Math.min(start + BULK_CHUNK, targets.length))
+      }
+      const avg = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0
+      setBulkSummary(
+        `${scores.length} page${scores.length === 1 ? '' : 's'} analysed - average score ${avg}/100.`
+        + (missing ? ` ${missing} disappeared mid-run and were skipped.` : ''),
+      )
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        setBulkSummary(`Stopped early - ${scores.length} page${scores.length === 1 ? '' : 's'} analysed before you pulled the plug.`)
+      } else {
+        setBulkError(err instanceof Error ? err.message : 'Bulk analysis failed')
+      }
+    } finally {
+      bulkAbort.current = null
+      setBulkRunning(false)
+      await load()
+    }
+  }
 
   if (loading) return <p style={{ color: 'var(--color-text-secondary)' }}>Rounding up every page on the site…</p>
   if (error) return <div className="alert alert-danger">{error}</div>
@@ -71,7 +137,7 @@ export default function PagesClient({ adminPath, canManage }: { adminPath: strin
     <div>
       <div className="page-header">
         <h1 className="page-title">SEO Pages</h1>
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
           <input
             type="search"
             placeholder="Search title or slug…"
@@ -86,8 +152,38 @@ export default function PagesClient({ adminPath, canManage }: { adminPath: strin
               {availableTypes.map((t) => <option key={t} value={t}>{TYPE_LABELS[t] ?? t}</option>)}
             </select>
           )}
+          <button
+            className="btn btn-primary btn-sm"
+            onClick={analyseAll}
+            disabled={bulkRunning || filtered.length === 0}
+            style={{ whiteSpace: 'nowrap' }}
+          >
+            {bulkRunning ? 'Analysing…' : `Analyse ${filtersActive ? 'these' : 'all'} ${filtered.length}`}
+          </button>
         </div>
       </div>
+
+      {bulkRunning && (
+        <div className="card" style={{ padding: '0.75rem 1rem', marginBottom: '1rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '0.5rem' }}>
+            <span style={{ fontSize: '0.8125rem' }}>Analysing {bulkDone} of {bulkTotal}…</span>
+            <button className="btn btn-secondary btn-sm" onClick={() => bulkAbort.current?.abort()}>Stop</button>
+          </div>
+          <div
+            role="progressbar"
+            aria-label="Bulk analysis progress"
+            aria-valuenow={bulkPct}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            style={{ height: 6, borderRadius: 999, background: 'var(--color-bg-subtle)', overflow: 'hidden' }}
+          >
+            <div style={{ width: `${bulkPct}%`, height: '100%', background: 'var(--color-primary)', transition: 'width 120ms linear' }} />
+          </div>
+        </div>
+      )}
+
+      {bulkError && <div className="alert alert-danger" style={{ marginBottom: '1rem' }}>{bulkError}</div>}
+      {bulkSummary && !bulkRunning && <div className="alert alert-success" style={{ marginBottom: '1rem' }}>{bulkSummary}</div>}
 
       <div style={{ display: 'grid', gridTemplateColumns: selected ? 'minmax(0, 1fr) minmax(320px, 420px)' : '1fr', gap: '1rem', alignItems: 'start' }}>
         <div className="table-wrapper">
@@ -218,7 +314,7 @@ function DetailPanel({ item, adminPath, canManage, onClose, onChanged }: {
   }
 
   return (
-    <div className="card" style={{ padding: '1rem', position: 'sticky', top: '1rem' }}>
+    <div className="card" style={{ padding: '1rem', position: 'sticky', top: '1rem', maxHeight: 'calc(100vh - 2rem)', overflowY: 'auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
         <h2 className="card-title" style={{ margin: 0 }}>Page detail</h2>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>

@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db/prisma'
+import { Prisma } from '@prisma/client'
 import type {
   AuditIssue,
   AuditRun,
@@ -46,6 +47,30 @@ export async function upsertPageMeta(params: {
       "score"         = CASE WHEN ${hasAnalysis} THEN EXCLUDED."score" ELSE "seo_page_meta"."score" END,
       "checks"        = CASE WHEN ${hasAnalysis} THEN EXCLUDED."checks" ELSE "seo_page_meta"."checks" END,
       "analyzed_at"   = CASE WHEN ${hasAnalysis} THEN CURRENT_TIMESTAMP ELSE "seo_page_meta"."analyzed_at" END
+  `
+}
+
+/**
+ * Write a whole batch of analysis results in one statement. Focus keywords are
+ * deliberately left alone - a bulk sweep re-scores pages, it never re-keywords
+ * them. Callers must dedupe by (entityType, entityId): Postgres refuses to let
+ * one INSERT touch the same conflicting row twice.
+ */
+export async function bulkUpsertPageMeta(rows: Array<{
+  entityType: string
+  entityId: string
+  score: number
+  checks: SeoCheck[]
+}>): Promise<void> {
+  if (rows.length === 0) return
+  const values = rows.map((r) => Prisma.sql`(${r.entityType}, ${r.entityId}, ${r.score}, ${JSON.stringify(r.checks)}::jsonb, CURRENT_TIMESTAMP)`)
+  await prisma.$executeRaw`
+    INSERT INTO "seo_page_meta" ("entity_type", "entity_id", "score", "checks", "analyzed_at")
+    VALUES ${Prisma.join(values, ', ')}
+    ON CONFLICT ("entity_type", "entity_id") DO UPDATE SET
+      "score"       = EXCLUDED."score",
+      "checks"      = EXCLUDED."checks",
+      "analyzed_at" = CURRENT_TIMESTAMP
   `
 }
 
