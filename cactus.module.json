@@ -1,18 +1,29 @@
 {
   "name": "ultimate-seo",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "tablePrefix": "seo_",
   "description": "The one-stop SEO command centre for Cactus: site-wide SEO scoring, page-by-page analysis with one-click fixes, a full site crawl audit, sitemap and robots controls, and structured data blocks for the page builder.",
-  "requiresCoreVersion": "0.5.571",
+  "requiresCoreVersion": "0.5.1150",
   "permissions": [
     "seo.view",
     "seo.manage"
   ],
   "navEntries": [
-    { "label": "SEO", "path": "/m/ultimate-seo", "icon": "<path d=\"M3 3v18h18\"/><path d=\"m7 13 4-4 4 3 5-6\"/>", "permission": "seo.view" }
+    {
+      "label": "SEO",
+      "path": "/m/ultimate-seo",
+      "icon": "<path d=\"M3 3v18h18\"/><path d=\"m7 13 4-4 4 3 5-6\"/>",
+      "permission": "seo.view"
+    }
   ],
   "settingsTabs": [
-    { "id": "ultimate-seo", "label": "SEO", "permission": "seo.manage", "import": "./components/admin/SettingsTab", "component": "UltimateSeoSettingsTab" }
+    {
+      "id": "ultimate-seo",
+      "label": "SEO",
+      "permission": "seo.manage",
+      "import": "./components/admin/SettingsTab",
+      "component": "UltimateSeoSettingsTab"
+    }
   ],
   "requiredEnvVars": [],
   "cookieCategories": [],
@@ -25,7 +36,10 @@
     "seo_sitemap_entries"
   ],
   "cronJobs": [
-    { "path": "/api/m/ultimate-seo/cron/audit", "schedule": "0 4 * * 1" }
+    {
+      "path": "/api/m/ultimate-seo/cron/audit",
+      "schedule": "0 4 * * 1"
+    }
   ],
   "puckBlocks": [
     {
