@@ -3,9 +3,10 @@ import { z } from 'zod'
 import { errorResponse } from '@/lib/utils'
 import { requireSeoPermission } from '@/modules/ultimate-seo/lib/auth'
 import { runAnalysisFor, suggestDescription } from '@/modules/ultimate-seo/lib/run-analysis'
+import { ENTITY_TYPES } from '@/modules/ultimate-seo/lib/types'
 
 const Body = z.object({
-  entityType: z.enum(['core-page', 'gazette-post', 'shop-product', 'directory-entry']),
+  entityType: z.enum(ENTITY_TYPES),
   entityId: z.string().min(1),
   focusKeyword: z.string().max(120).nullable().optional(),
 })

@@ -132,6 +132,96 @@ async function shopProducts(): Promise<RawItem[]> {
   }))
 }
 
+// The shop's taxonomy landing pages. Both are real, indexable addresses with
+// their own title and meta description, and neither was ever listed here - so a
+// shop whose category and collection pages ARE its search-traffic strategy saw
+// its twenty thousand products and none of the eighty-odd pages meant to bring
+// people to them. Neither table carries a status column: a category or
+// collection exists or it does not, and it answers on its address either way.
+async function shopCategories(): Promise<RawItem[]> {
+  const rows = await prisma.$queryRaw<Array<{
+    id: string; name: string; slug: string; meta_title: string | null
+    meta_description: string | null; short_description: string | null
+    description: string | null; og_image_id: string | null; updated_at: Date
+  }>>`
+    SELECT "id", "name", "slug", "meta_title", "meta_description", "short_description",
+           "description", "og_image_id", "updated_at"
+    FROM "shp_categories" ORDER BY "position" ASC, "name" ASC
+  `
+  return rows.map((c) => ({
+    entityType: 'shop-category' as EntityType,
+    entityId: c.id,
+    title: c.meta_title || c.name,
+    slug: c.slug,
+    // Unlike products, a category never moves to the site root - see the shop's
+    // own product-url.ts, which says so in as many words.
+    url: `/shop/categories/${c.slug}`,
+    status: 'published',
+    metaDescription: c.meta_description || c.short_description || c.description,
+    hasOgImage: !!c.og_image_id,
+    editable: false,
+    editPath: '/m/shop/categories',
+    updatedAt: c.updated_at.toISOString(),
+  }))
+}
+
+async function shopCollections(): Promise<RawItem[]> {
+  const rows = await prisma.$queryRaw<Array<{
+    id: string; name: string; slug: string; meta_title: string | null
+    meta_description: string | null; description: string | null
+    og_image_id: string | null; updated_at: Date
+  }>>`
+    SELECT "id", "name", "slug", "meta_title", "meta_description", "description",
+           "og_image_id", "updated_at"
+    FROM "shp_collections" ORDER BY "position" ASC, "name" ASC
+  `
+  return rows.map((c) => ({
+    entityType: 'shop-collection' as EntityType,
+    entityId: c.id,
+    title: c.meta_title || c.name,
+    slug: c.slug,
+    url: `/shop/collections/${c.slug}`,
+    status: 'published',
+    metaDescription: c.meta_description || c.description,
+    hasOgImage: !!c.og_image_id,
+    editable: false,
+    editPath: '/m/shop/collections',
+    updatedAt: c.updated_at.toISOString(),
+  }))
+}
+
+// Filter collection pages - a saved cut of the filter grid published at its own
+// bare top-level address, e.g. /green-office-chairs. These are built for search
+// and nothing else, so being the one content type the SEO screen could not see
+// was a particularly poor joke. The address is always the bare slug: the module
+// claims it through publicRootSlug rather than sitting under a prefix.
+async function filterCollections(): Promise<RawItem[]> {
+  const rows = await prisma.$queryRaw<Array<{
+    id: string; name: string; slug: string; status: string
+    meta_title: string | null; meta_description: string | null; short_description: string | null
+    og_image: string | null; updated_at: Date
+  }>>`
+    SELECT "id", "name", "slug", "status", "meta_title", "meta_description",
+           "short_description", "og_image", "updated_at"
+    FROM "flt_collections" ORDER BY "position" ASC, "name" ASC
+  `
+  return rows.map((c) => ({
+    entityType: 'filter-collection' as EntityType,
+    entityId: c.id,
+    title: c.meta_title || c.name,
+    slug: c.slug,
+    url: `/${c.slug}`,
+    status: c.status.toLowerCase(),
+    metaDescription: c.meta_description || c.short_description,
+    // og_image is a URL on this table, not a media id.
+    hasOgImage: !!c.og_image,
+    editable: false,
+    // The screen is a tab on the shop's Catalogue page, not a route of its own.
+    editPath: '/m/shop/products?tab=filters-collections',
+    updatedAt: c.updated_at.toISOString(),
+  }))
+}
+
 async function directoryEntries(): Promise<RawItem[]> {
   const rows = await prisma.$queryRaw<Array<{
     id: string; name: string; slug: string; status: string
@@ -161,7 +251,8 @@ export async function getInventory(): Promise<InventoryItem[]> {
 
   const sources: Array<Promise<RawItem[]>> = [coreP()]
   if (active.has('gazette')) sources.push(gazettePosts())
-  if (active.has('shop')) sources.push(shopProducts())
+  if (active.has('shop')) sources.push(shopProducts(), shopCategories(), shopCollections())
+  if (active.has('filters-for-shop')) sources.push(filterCollections())
   if (active.has('directory')) sources.push(directoryEntries())
 
   const settled = await Promise.allSettled(sources)

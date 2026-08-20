@@ -3,13 +3,14 @@ import { z } from 'zod'
 import { errorResponse } from '@/lib/utils'
 import { requireSeoPermission } from '@/modules/ultimate-seo/lib/auth'
 import { analyzeBatch } from '@/modules/ultimate-seo/lib/bulk-analysis'
+import { ENTITY_TYPES } from '@/modules/ultimate-seo/lib/types'
 
 // One chunk of a site-wide sweep. The client walks the inventory and posts
 // batches, so a catalogue of any size stays well inside the 60s module-route
 // ceiling and the progress bar has something honest to report.
 const Body = z.object({
   items: z.array(z.object({
-    entityType: z.enum(['core-page', 'gazette-post', 'shop-product', 'directory-entry']),
+    entityType: z.enum(ENTITY_TYPES),
     entityId: z.string().min(1),
   })).min(1).max(100),
 })

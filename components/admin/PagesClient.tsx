@@ -25,12 +25,18 @@ const TYPE_LABELS: Record<string, string> = {
   'core-page': 'Page',
   'gazette-post': 'Gazette post',
   'shop-product': 'Product',
+  'shop-category': 'Product category',
+  'shop-collection': 'Product collection',
+  'filter-collection': 'Filter page',
   'directory-entry': 'Directory entry',
 }
 
 const EDIT_LABELS: Record<string, string> = {
   'gazette-post': 'Edit in Gazette',
   'shop-product': 'Edit in Shop',
+  'shop-category': 'Edit in Shop',
+  'shop-collection': 'Edit in Shop',
+  'filter-collection': 'Edit in Shop',
   'directory-entry': 'Edit in Directory',
 }
 

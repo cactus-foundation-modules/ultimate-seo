@@ -101,6 +101,112 @@ async function loadShopProducts(ids: string[]): Promise<Map<string, EntityDetail
   return out
 }
 
+// A designed document that has been opened in the builder but never built in is
+// an empty document, not a missing one - the same call the shop's own
+// description body makes before deciding which version of the copy to print.
+function hasDocContent(doc: unknown): boolean {
+  return !!doc && typeof doc === 'object' && Array.isArray((doc as { content?: unknown }).content)
+    && (doc as { content: unknown[] }).content.length > 0
+}
+
+// Taxonomy and filter pages print a plain blurb AND, where there is one, a
+// designed document underneath it. Both are the page's copy, so they are merged
+// into one synthetic document rather than analysed apart: word count, heading
+// structure and link counts then describe the page a reader actually gets.
+function mergedContent(plain: string | null, doc: unknown): ExtractedContent {
+  const items: unknown[] = []
+  if (plain && plain.trim()) items.push({ type: 'RichText', props: { html: plain } })
+  if (doc && typeof doc === 'object') {
+    const d = doc as { content?: unknown; zones?: unknown }
+    if (Array.isArray(d.content)) items.push(...d.content)
+    return extractContent({ content: items, zones: d.zones })
+  }
+  return extractContent({ content: items })
+}
+
+async function loadShopCategories(ids: string[]): Promise<Map<string, EntityDetail>> {
+  const rows = await prisma.$queryRaw<Array<{
+    id: string; name: string; slug: string; meta_title: string | null
+    meta_description: string | null; short_description: string | null
+    description: string | null; description_puck: unknown; og_image_id: string | null
+  }>>`
+    SELECT "id", "name", "slug", "meta_title", "meta_description", "short_description",
+           "description", "description_puck", "og_image_id"
+    FROM "shp_categories" WHERE "id" = ANY(${ids}::text[])
+  `
+  const out = new Map<string, EntityDetail>()
+  for (const c of rows) {
+    const designed = hasDocContent(c.description_puck)
+    // The plain long description is only on the page when no designed one has
+    // replaced it, so it only counts towards the copy in that case.
+    const plain = [c.short_description, designed ? null : c.description].filter(Boolean).join('\n')
+    out.set(c.id, {
+      title: c.meta_title || c.name,
+      slug: c.slug,
+      metaDescription: c.meta_description || c.short_description || c.description,
+      hasOgImage: !!c.og_image_id,
+      // A category has no draft state: it answers on its address from the
+      // moment it exists.
+      isPublished: true,
+      content: mergedContent(plain || null, designed ? c.description_puck : null),
+      // The category page prints the category's name as its H1.
+      titleIsH1: true,
+    })
+  }
+  return out
+}
+
+async function loadShopCollections(ids: string[]): Promise<Map<string, EntityDetail>> {
+  const rows = await prisma.$queryRaw<Array<{
+    id: string; name: string; slug: string; meta_title: string | null
+    meta_description: string | null; description: string | null; og_image_id: string | null
+  }>>`
+    SELECT "id", "name", "slug", "meta_title", "meta_description", "description", "og_image_id"
+    FROM "shp_collections" WHERE "id" = ANY(${ids}::text[])
+  `
+  const out = new Map<string, EntityDetail>()
+  for (const c of rows) {
+    out.set(c.id, {
+      title: c.meta_title || c.name,
+      slug: c.slug,
+      metaDescription: c.meta_description || c.description,
+      hasOgImage: !!c.og_image_id,
+      isPublished: true,
+      content: mergedContent(c.description, null),
+      // The collection page prints the collection's name as its H1.
+      titleIsH1: true,
+    })
+  }
+  return out
+}
+
+async function loadFilterCollections(ids: string[]): Promise<Map<string, EntityDetail>> {
+  const rows = await prisma.$queryRaw<Array<{
+    id: string; name: string; slug: string; status: string; meta_title: string | null
+    meta_description: string | null; short_description: string | null
+    intro_puck: unknown; og_image: string | null
+  }>>`
+    SELECT "id", "name", "slug", "status", "meta_title", "meta_description",
+           "short_description", "intro_puck", "og_image"
+    FROM "flt_collections" WHERE "id" = ANY(${ids}::text[])
+  `
+  const out = new Map<string, EntityDetail>()
+  for (const c of rows) {
+    out.set(c.id, {
+      title: c.meta_title || c.name,
+      slug: c.slug,
+      metaDescription: c.meta_description || c.short_description,
+      hasOgImage: !!c.og_image,
+      isPublished: c.status === 'PUBLISHED',
+      content: mergedContent(c.short_description, c.intro_puck),
+      // Both the designed header block and the plain fallback page print the
+      // collection's name as the H1.
+      titleIsH1: true,
+    })
+  }
+  return out
+}
+
 async function loadDirectoryEntries(ids: string[]): Promise<Map<string, EntityDetail>> {
   const rows = await prisma.$queryRaw<Array<{
     id: string; name: string; slug: string; status: string; short_description: string | null; description: string | null
@@ -131,6 +237,9 @@ export async function loadEntities(entityType: EntityType, ids: string[]): Promi
     case 'core-page': return loadCorePages(ids)
     case 'gazette-post': return loadGazettePosts(ids)
     case 'shop-product': return loadShopProducts(ids)
+    case 'shop-category': return loadShopCategories(ids)
+    case 'shop-collection': return loadShopCollections(ids)
+    case 'filter-collection': return loadFilterCollections(ids)
     case 'directory-entry': return loadDirectoryEntries(ids)
   }
 }

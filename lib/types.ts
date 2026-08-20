@@ -13,7 +13,22 @@ export type AnalysisResult = {
   checks: SeoCheck[]
 }
 
-export type EntityType = 'core-page' | 'gazette-post' | 'shop-product' | 'directory-entry'
+// Every content type the Pages screen can list, in the order the type filter
+// offers them. Exported as a list rather than only a union because the same set
+// is needed at runtime by both API route schemas - and a union that only
+// existed at compile time is exactly how the shop's own category, collection
+// and filter-collection pages went years without being listed here at all.
+export const ENTITY_TYPES = [
+  'core-page',
+  'gazette-post',
+  'shop-product',
+  'shop-category',
+  'shop-collection',
+  'filter-collection',
+  'directory-entry',
+] as const
+
+export type EntityType = (typeof ENTITY_TYPES)[number]
 
 /** One row in the unified content inventory. */
 export type InventoryItem = {
