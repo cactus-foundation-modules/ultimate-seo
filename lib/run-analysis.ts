@@ -8,6 +8,7 @@ import { extractContent, type ExtractedContent } from './content'
 import { upsertPageMeta } from './db'
 import { getInventory } from './inventory'
 import { getSeoSettings } from './settings'
+import { shopCategoriesWithSocialImage, shopCollectionsWithSocialImage } from './shop-og-image'
 import type { AnalysisResult, EntityType } from './types'
 
 export type EntityDetail = {
@@ -134,6 +135,7 @@ async function loadShopCategories(ids: string[]): Promise<Map<string, EntityDeta
            "description", "description_puck", "og_image_id"
     FROM "shp_categories" WHERE "id" = ANY(${ids}::text[])
   `
+  const withImage = await shopCategoriesWithSocialImage(ids)
   const out = new Map<string, EntityDetail>()
   for (const c of rows) {
     const designed = hasDocContent(c.description_puck)
@@ -144,7 +146,10 @@ async function loadShopCategories(ids: string[]): Promise<Map<string, EntityDeta
       title: c.meta_title || c.name,
       slug: c.slug,
       metaDescription: c.meta_description || c.short_description || c.description,
-      hasOgImage: !!c.og_image_id,
+      // Not `og_image_id` alone: the category page falls back to its own
+      // picture and then to a photograph off the products it lists, exactly as
+      // a product page falls back to its first photograph. See shop-og-image.ts.
+      hasOgImage: withImage.has(c.id),
       // A category has no draft state: it answers on its address from the
       // moment it exists.
       isPublished: true,
@@ -164,13 +169,15 @@ async function loadShopCollections(ids: string[]): Promise<Map<string, EntityDet
     SELECT "id", "name", "slug", "meta_title", "meta_description", "description", "og_image_id"
     FROM "shp_collections" WHERE "id" = ANY(${ids}::text[])
   `
+  const withImage = await shopCollectionsWithSocialImage(ids)
   const out = new Map<string, EntityDetail>()
   for (const c of rows) {
     out.set(c.id, {
       title: c.meta_title || c.name,
       slug: c.slug,
       metaDescription: c.meta_description || c.description,
-      hasOgImage: !!c.og_image_id,
+      // Same fallback chain as a category - see shop-og-image.ts.
+      hasOgImage: withImage.has(c.id),
       isPublished: true,
       content: mergedContent(c.description, null),
       // The collection page prints the collection's name as its H1.

@@ -1,6 +1,6 @@
 {
   "name": "ultimate-seo",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "tablePrefix": "seo_",
   "description": "The one-stop SEO command centre for Cactus: site-wide SEO scoring, page-by-page analysis with one-click fixes, a full site crawl audit, sitemap and robots controls, and structured data blocks for the page builder.",
   "requiresCoreVersion": "0.5.1150",

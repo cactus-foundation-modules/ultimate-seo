@@ -6,6 +6,7 @@
 import { prisma } from '@/lib/db/prisma'
 import { INSTALLED_MODULE_WHERE } from '@/lib/modules/live-status'
 import { getAllPageMeta } from './db'
+import { shopCategoriesWithSocialImage, shopCollectionsWithSocialImage } from './shop-og-image'
 import type { EntityType, InventoryItem, SeoCheck } from './types'
 
 type RawItem = Omit<InventoryItem, 'focusKeyword' | 'score' | 'checks' | 'analyzedAt'>
@@ -148,6 +149,7 @@ async function shopCategories(): Promise<RawItem[]> {
            "description", "og_image_id", "updated_at"
     FROM "shp_categories" ORDER BY "position" ASC, "name" ASC
   `
+  const withImage = await shopCategoriesWithSocialImage(null)
   return rows.map((c) => ({
     entityType: 'shop-category' as EntityType,
     entityId: c.id,
@@ -158,7 +160,9 @@ async function shopCategories(): Promise<RawItem[]> {
     url: `/shop/categories/${c.slug}`,
     status: 'published',
     metaDescription: c.meta_description || c.short_description || c.description,
-    hasOgImage: !!c.og_image_id,
+    // Not `og_image_id` alone: the category page falls back to its own picture
+    // and then to a photograph off the products it lists. See shop-og-image.ts.
+    hasOgImage: withImage.has(c.id),
     editable: false,
     editPath: '/m/shop/categories',
     updatedAt: c.updated_at.toISOString(),
@@ -175,6 +179,7 @@ async function shopCollections(): Promise<RawItem[]> {
            "og_image_id", "updated_at"
     FROM "shp_collections" ORDER BY "position" ASC, "name" ASC
   `
+  const withImage = await shopCollectionsWithSocialImage(null)
   return rows.map((c) => ({
     entityType: 'shop-collection' as EntityType,
     entityId: c.id,
@@ -183,7 +188,8 @@ async function shopCollections(): Promise<RawItem[]> {
     url: `/shop/collections/${c.slug}`,
     status: 'published',
     metaDescription: c.meta_description || c.description,
-    hasOgImage: !!c.og_image_id,
+    // Same fallback chain as a category - see shop-og-image.ts.
+    hasOgImage: withImage.has(c.id),
     editable: false,
     editPath: '/m/shop/collections',
     updatedAt: c.updated_at.toISOString(),
