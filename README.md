@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="module-art.webp" alt="Ultimate SEO" width="640" />
+</p>
+
 # Ultimate SEO
 
 The one-stop SEO command centre for [Cactus](https://github.com/usersaynoso/cactus-foundation). Controls, analyses and suggests SEO improvements across the whole site - core pages and installed modules alike.
