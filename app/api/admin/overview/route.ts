@@ -3,15 +3,17 @@ import { prisma } from '@/lib/db/prisma'
 import { requireSeoPermission } from '@/modules/ultimate-seo/lib/auth'
 import { listAuditRuns } from '@/modules/ultimate-seo/lib/db'
 import { getInventory } from '@/modules/ultimate-seo/lib/inventory'
+import { getSeoSettings } from '@/modules/ultimate-seo/lib/settings'
 
 export async function GET() {
   const auth = await requireSeoPermission('seo.view')
   if ('error' in auth) return auth.error
 
-  const [inventory, runs, config] = await Promise.all([
+  const [inventory, runs, config, settings] = await Promise.all([
     getInventory(),
     listAuditRuns(5),
     prisma.siteConfig.findUnique({ where: { id: 'singleton' }, select: { hideFromCrawlers: true, status: true } }),
+    getSeoSettings(),
   ])
 
   const published = inventory.filter((i) => i.status === 'published')
@@ -50,6 +52,12 @@ export async function GET() {
     },
     hideFromCrawlers: config?.hideFromCrawlers ?? true,
     siteStatus: config?.status ?? 'live',
+    // Site-wide structured data is set once and then forgotten about, so the
+    // dashboard is the only place anybody would notice it was never switched on.
+    structuredData: {
+      organization: settings.structuredData.emitOrganization,
+      webSite: settings.structuredData.emitWebSite,
+    },
     latestRuns: runs,
     quickWins,
   })

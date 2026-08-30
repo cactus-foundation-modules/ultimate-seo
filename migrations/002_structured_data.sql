@@ -1,0 +1,21 @@
+-- Ultimate SEO - site-wide structured data settings.
+--
+-- A new numbered file rather than an edit to 001: run-module-migrations.mjs
+-- records applied files per module and never re-runs one it has already seen,
+-- so an in-place edit reaches fresh installs only and leaves every existing
+-- site without the column.
+--
+-- Holds the fuller organisation profile the site-wide Organization/LocalBusiness
+-- JSON-LD is built from, plus the emission switches:
+-- {
+--   orgType, name, legalName, description, url, logoUrl, imageUrl,
+--   telephone, email, streetAddress, addressLocality, addressRegion,
+--   postalCode, addressCountry, vatId, taxId, foundingDate, priceRange,
+--   openingHours: string[], areaServed: string[],
+--   emitOrganization, emitWebSite, emitSearchAction, searchUrlTemplate
+-- }
+--
+-- Deliberately its own column rather than more keys on "organization": that one
+-- is read by the page-builder block's editor pre-fill, and widening it would
+-- have changed what the block puts in a page's stored props.
+ALTER TABLE "seo_settings" ADD COLUMN IF NOT EXISTS "structured_data" JSONB;

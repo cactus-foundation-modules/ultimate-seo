@@ -17,6 +17,7 @@ type Overview = {
   }
   hideFromCrawlers: boolean
   siteStatus: string
+  structuredData: { organization: boolean; webSite: boolean }
   latestRuns: Array<{ id: string; status: string; started_at: string; pages_crawled: number; pages_total: number; summary: { errors: number; warnings: number; notices: number } | null }>
   quickWins: Array<{ entityType: string; entityId: string; title: string; url: string; score: number | null }>
 }
@@ -66,6 +67,13 @@ export default function DashboardClient({ adminPath }: { adminPath: string }) {
       {data.siteStatus !== 'live' && (
         <div className="alert alert-warning" style={{ marginBottom: '1rem' }}>
           The site status is <strong>{data.siteStatus}</strong>, which also blocks search engines.
+        </div>
+      )}
+      {!data.structuredData.organization && (
+        <div className="alert alert-info" style={{ marginBottom: '1rem' }}>
+          Search engines have not been told who is behind this site.{' '}
+          <Link href={`${base}/m/ultimate-seo/structured-data`}>Fill in the structured data</Link> and your results can
+          carry a logo and your contact details instead of being a plain blue link.
         </div>
       )}
 

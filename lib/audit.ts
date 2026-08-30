@@ -113,6 +113,50 @@ function checkPage(url: string, html: string, status: number, ms: number): Issue
     issues.push({ url, severity: 'notice', checkKey: 'canonical', message: 'No canonical link tag.' })
   }
 
+  // A page reachable on both hosts, or advertising a canonical belonging to a
+  // different page entirely, is worse off than one with no canonical at all -
+  // it hands its own credit to somewhere else. Only checked when there is one.
+  const canonicalHref = canonical?.getAttribute('href')?.trim()
+  if (canonicalHref) {
+    try {
+      const resolved = new URL(canonicalHref, url)
+      if (resolved.origin !== new URL(url).origin) {
+        issues.push({ url, severity: 'warning', checkKey: 'canonical-host', message: 'The canonical tag points at a different site.', detail: { canonical: resolved.toString() } })
+      }
+    } catch {
+      issues.push({ url, severity: 'warning', checkKey: 'canonical-host', message: 'The canonical tag is not a usable address.', detail: { canonical: canonicalHref } })
+    }
+  }
+
+  // Structured data: the difference between a plain blue link and a result with
+  // a logo, a rating or a price attached to it.
+  const jsonLdBlocks = [...doc.querySelectorAll('script[type="application/ld+json"]')]
+  if (jsonLdBlocks.length === 0) {
+    issues.push({ url, severity: 'notice', checkKey: 'structured-data', message: 'No structured data on the page - search results will be plain.' })
+  } else {
+    // Present but unparseable is the worse case of the two: it looks fine in the
+    // page source and is thrown away in silence by everything that reads it.
+    const broken = jsonLdBlocks.filter((block) => {
+      try {
+        JSON.parse(block.textContent ?? '')
+        return false
+      } catch {
+        return true
+      }
+    }).length
+    if (broken > 0) {
+      issues.push({ url, severity: 'error', checkKey: 'structured-data', message: `${broken} of ${jsonLdBlocks.length} structured data blocks could not be read - search engines will ignore them.` })
+    }
+  }
+
+  if (!doc.querySelector('meta[name="viewport"]')) {
+    issues.push({ url, severity: 'warning', checkKey: 'viewport', message: 'No viewport tag - phones will render the page zoomed out, and most visitors are on phones.' })
+  }
+
+  if (!doc.documentElement?.getAttribute('lang')?.trim()) {
+    issues.push({ url, severity: 'notice', checkKey: 'html-lang', message: 'The page does not declare what language it is in.' })
+  }
+
   const text = doc.body?.textContent?.replace(/\s+/g, ' ').trim() ?? ''
   const words = text ? text.split(' ').length : 0
   if (words < 100) {

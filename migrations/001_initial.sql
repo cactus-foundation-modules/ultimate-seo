@@ -9,6 +9,10 @@ CREATE TABLE IF NOT EXISTS "seo_settings" (
     "organization"          JSONB,
     -- Social identity: { twitterHandle }
     "social"                JSONB,
+    -- Site-wide structured data profile and emission switches - see
+    -- 002_structured_data.sql for the full shape. Present here so a fresh
+    -- install gets the column from the start; 002 keeps existing installs level.
+    "structured_data"       JSONB,
     -- Analysis targets and crawler limits:
     -- { titleMin, titleMax, descMin, descMax, densityMin, densityMax, auditMaxPages }
     "targets"               JSONB,

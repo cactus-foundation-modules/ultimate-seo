@@ -48,7 +48,11 @@ export async function PUT(request: NextRequest) {
   if (!parsed.success) return errorResponse(parsed.error.issues[0]?.message ?? 'Invalid input')
 
   const { hideFromCrawlers, ...settings } = parsed.data
-  await saveSeoSettings(settings)
+  // saveSeoSettings writes every column, so the site-wide structured data
+  // profile - which this form does not edit, and the Structured data tab does -
+  // has to be carried through rather than left to default itself back to blank.
+  const current = await getSeoSettings()
+  await saveSeoSettings({ ...settings, structuredData: current.structuredData })
   // The search-visibility switch lives on the core SiteConfig singleton - this
   // module takes over managing it, but the value stays where core robots.ts reads it.
   await prisma.siteConfig.update({ where: { id: 'singleton' }, data: { hideFromCrawlers } })
