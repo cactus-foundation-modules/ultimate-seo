@@ -12,8 +12,15 @@ export async function GET(request: NextRequest) {
   const auth = request.headers.get('authorization')
   if (auth !== `Bearer ${secret}`) return errorResponse('Unauthorized', 401)
 
-  if (await hasRunningAudit()) return NextResponse.json({ ok: true, skipped: 'audit already running' })
+  // Caught and reported rather than thrown. An uncaught error here is masked by the
+  // framework into a bare "Internal Server Error", so core's cron dispatcher records
+  // "HTTP 500" and the owner is told a job failed with no hint as to why.
+  try {
+    if (await hasRunningAudit()) return NextResponse.json({ ok: true, skipped: 'audit already running' })
 
-  const result = await runSiteAudit('cron')
-  return NextResponse.json({ ok: true, ...result })
+    const result = await runSiteAudit('cron')
+    return NextResponse.json({ ok: true, ...result })
+  } catch (err) {
+    return errorResponse(err instanceof Error ? err.message : 'the site audit failed', 500)
+  }
 }

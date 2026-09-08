@@ -12,7 +12,17 @@ import { getSeoSettings } from './settings'
 import { getInventory } from './inventory'
 import { listSitemapEntries } from './db'
 
-const TIME_BUDGET_MS = 45_000
+// The whole run, not just the crawl loop - see runSiteAudit, where the clock starts
+// before the sitemap is collected rather than after it.
+//
+// Sized to fit inside a slice of core's cron dispatcher rather than inside the 60s
+// route ceiling. The dispatcher gives a job whatever is left of its own 60s tick and
+// still has to write the run down afterwards, so a budget set to the full ceiling
+// meant every scheduled audit was cut off mid-crawl and recorded as a failure - which
+// is exactly what happened to the weekly one, week after week. A manual audit from
+// the admin screen gets the same budget and reports 'partial' if the site is larger
+// than one pass; the crawl is deliberately bounded either way.
+const TIME_BUDGET_MS = 38_000
 const FETCH_TIMEOUT_MS = 10_000
 const CONCURRENCY = 4
 
@@ -180,6 +190,12 @@ async function fetchPage(url: string): Promise<{ status: number; html: string; m
 }
 
 export async function runSiteAudit(trigger: 'manual' | 'cron'): Promise<{ runId: string; status: string }> {
+  // Started here, not after the sitemap collection below. collectUrls fetches the
+  // site's sitemap over HTTP and can take several seconds on a large catalogue; a
+  // clock that only starts afterwards hands the crawl loop a budget the invocation
+  // does not have left, and the caller kills it before it can record anything.
+  const started = Date.now()
+
   const siteUrl = resolveSiteUrl()
   if (!siteUrl) throw new Error('SITE_URL is not configured, so the crawler has nowhere to point itself.')
 
@@ -187,7 +203,6 @@ export async function runSiteAudit(trigger: 'manual' | 'cron'): Promise<{ runId:
   const urls = await collectUrls(siteUrl, settings.targets.auditMaxPages)
   const runId = await createAuditRun(trigger, urls.length)
 
-  const started = Date.now()
   let crawled = 0
   let totalMs = 0
   const counts = { errors: 0, warnings: 0, notices: 0 }
