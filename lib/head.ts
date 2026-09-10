@@ -1,5 +1,7 @@
 import { cache } from 'react'
 import { prisma } from '@/lib/db/prisma'
+import { observeAiRequest } from './ai/analytics'
+import { getPageHead } from './ai/page-head'
 import { getSeoSettings } from './settings'
 import { buildSiteJsonLd } from './structured-data'
 
@@ -10,9 +12,10 @@ import { buildSiteJsonLd } from './structured-data'
 export type PublicHead = {
   jsonLd: object[]
   meta: Array<{ name?: string; property?: string; content: string }>
+  links: Array<{ rel: string; href: string; type?: string; title?: string; hrefLang?: string }>
 }
 
-const EMPTY: PublicHead = { jsonLd: [], meta: [] }
+const EMPTY: PublicHead = { jsonLd: [], meta: [], links: [] }
 
 // One query per request, not one per call. This runs on the render path of
 // every public page on the site, so it gets the same cache() treatment core
@@ -29,6 +32,11 @@ const readSettings = cache(async () => {
 })
 
 export async function getPublicHead(siteUrl: string): Promise<PublicHead> {
+  // Runs on every public page, which makes it the one place that sees an AI
+  // crawler arrive. Costs an ordinary visitor two string comparisons and
+  // nothing else; see lib/ai/analytics.ts.
+  void observeAiRequest()
+
   try {
     const { settings, siteName } = await readSettings()
     const jsonLd = buildSiteJsonLd(settings.structuredData, {
@@ -46,7 +54,27 @@ export async function getPublicHead(siteUrl: string): Promise<PublicHead> {
       meta.push({ name: 'twitter:site', content: handle.startsWith('@') ? handle : `@${handle}` })
     }
 
-    return { jsonLd, meta }
+    const links: PublicHead['links'] = []
+    // How a reader finds out this site keeps Markdown copies of itself. There
+    // is no meta tag that can say it, and an agent that has not been told looks
+    // for /llms.txt exactly once before giving up on the idea.
+    if (settings.ai.llmsTxt) {
+      links.push({
+        rel: 'alternate',
+        type: 'text/markdown',
+        href: `${siteUrl}/llms.txt`,
+        title: 'Markdown index of this site',
+      })
+    }
+
+    // This page's own structured data and its twin link. Both are off unless
+    // the owner has asked, because between them they put one database read on
+    // the render of every public page - see lib/ai/page-head.ts.
+    const page = await getPageHead(siteUrl, settings.ai)
+    jsonLd.push(...page.jsonLd)
+    links.push(...page.links)
+
+    return { jsonLd, meta, links }
   } catch {
     // A settings table that is mid-migration, or a database having a moment,
     // must cost the page its structured data and nothing else.

@@ -238,6 +238,7 @@ export type SeoSettings = {
   social: SeoSocial
   targets: SeoTargets
   structuredData: SeoStructuredData
+  ai: SeoAiSettings
 }
 
 export type PageMetaRow = {
@@ -281,4 +282,114 @@ export type SitemapEntry = {
   change_freq: string | null
   note: string | null
   created_at: Date
+}
+
+// ---------------------------------------------------------------------------
+// The AI half: what the site publishes for language models, and what it lets
+// them do. See lib/ai/ for the crawler table and the builders.
+// ---------------------------------------------------------------------------
+
+/** yes / no / say nothing. Unset is not the same as no: it leaves the line out. */
+export type ContentSignal = 'yes' | 'no' | 'unset'
+
+export type SeoContentSignals = {
+  /** May this page be shown in search results and cited in answers. */
+  search: ContentSignal
+  /** May its text be fed to a model answering a question right now. */
+  aiInput: ContentSignal
+  /** May its text be used to train a model. */
+  aiTrain: ContentSignal
+}
+
+export type CrawlerStance = 'allow' | 'block'
+
+export type SeoAiSettings = {
+  /**
+   * The paragraph at the top of llms.txt: what this site is, in the owner's own
+   * words. Blank falls back to the site's own description.
+   */
+  siteSummary: string
+  /** Publish /llms.txt. */
+  llmsTxt: boolean
+  /** Publish /llms-full.txt as well - the index with the short documents inlined. */
+  llmsFull: boolean
+  /** Publish the Markdown twin of each page at its own address with .md on the end. */
+  markdown: boolean
+  /** Which content types get a twin. Everything, unless an owner narrows it. */
+  markdownTypes: EntityType[]
+  /** Offer the per-entity abstract field on the Pages screen. */
+  abstracts: boolean
+  /**
+   * Publish each page's own structured data - breadcrumbs, blog posts,
+   * collection pages, directory listings. Costs one lookup per page render.
+   */
+  pageStructuredData: boolean
+  /**
+   * Tell each page's reader where its Markdown twin is, with a
+   * `<link rel="alternate" type="text/markdown">`. Shares the same lookup as
+   * the line above, so having both costs no more than having one.
+   */
+  pageMarkdownLink: boolean
+  /** Count AI crawler visits and AI-assistant referrals. Costs money; see the screen. */
+  analytics: boolean
+  /** Days of counts to keep. The weekly job drops anything older. */
+  analyticsRetentionDays: number
+  /** Serve the read-only agent endpoint. Costs money; see the screen. */
+  mcp: boolean
+  /** Most rows one agent search may return. */
+  mcpMaxResults: number
+  /** Per-crawler stance, keyed by AI_CRAWLERS key. Missing = allowed. */
+  crawlerPolicy: Record<string, CrawlerStance>
+  contentSignals: SeoContentSignals
+}
+
+export const DEFAULT_AI_SETTINGS: SeoAiSettings = {
+  siteSummary: '',
+  // The two discovery files and the Markdown twins are the feature, and they are
+  // served from a table this module builds on its own schedule - a fetch of one
+  // is a single indexed read, so they are on from the start. The three below
+  // them are not: each one costs real money on every page view or every agent
+  // request, so each is a decision an owner makes deliberately.
+  llmsTxt: true,
+  llmsFull: true,
+  markdown: true,
+  markdownTypes: [...ENTITY_TYPES],
+  abstracts: true,
+  // Both off: unlike the twins, which are served from a table and cost the site
+  // nothing until somebody fetches one, these two put a database read on the
+  // render of every public page. Worth having, and worth being asked for.
+  pageStructuredData: false,
+  pageMarkdownLink: false,
+  analytics: false,
+  analyticsRetentionDays: 90,
+  mcp: false,
+  mcpMaxResults: 25,
+  // Empty, not "everything blocked": robots.txt says nothing about these
+  // crawlers today, and an update that quietly started blocking them would
+  // change what a live site publishes without anybody asking for it.
+  crawlerPolicy: {},
+  contentSignals: { search: 'unset', aiInput: 'unset', aiTrain: 'unset' },
+}
+
+/** One materialised Markdown twin. */
+export type LlmDocumentRow = {
+  id: string
+  entity_type: string
+  entity_id: string
+  path: string
+  title: string
+  summary: string | null
+  markdown: string
+  byte_size: number
+  source_updated_at: Date | null
+  built_at: Date
+}
+
+export type AiHitRow = {
+  day: Date
+  kind: 'crawler' | 'referral'
+  agent: string
+  path: string
+  hits: number
+  last_seen: Date
 }

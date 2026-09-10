@@ -46,6 +46,10 @@ function typeLabel(type: string): string {
 
 type AnalyzeResponse = { score: number; checks: SeoCheck[]; descriptionSuggestion: string | null }
 
+// Which entities have a Markdown twin, and which have a summary written for an
+// AI reader. See the AI & agents tab for what either of those means.
+type Coverage = { twins: string[]; abstracts: Record<string, string> }
+
 type BulkKey = { entityType: string; entityId: string }
 type BulkResponse = { analysed: Array<BulkKey & { score: number }>; missing: BulkKey[] }
 
@@ -89,6 +93,8 @@ function relativeDate(iso: string | null): string {
 
 export default function PagesClient({ adminPath, canManage }: { adminPath: string; canManage: boolean }) {
   const [items, setItems] = useState<InventoryItem[]>([])
+  const [twins, setTwins] = useState<Set<string>>(new Set())
+  const [abstracts, setAbstracts] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [filters, setFilters] = useState<Filters>(DEFAULT_VIEW.filters)
@@ -107,10 +113,18 @@ export default function PagesClient({ adminPath, canManage }: { adminPath: strin
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch(`${API}/pages`)
+      // Both in one go. The coverage read is a pair of small queries and is
+      // what the "Ready for AI" column is; asking for it separately would mean
+      // the column arriving a beat after the rows it belongs to.
+      const [res, coverageRes] = await Promise.all([fetch(`${API}/pages`), fetch(`${API}/ai/coverage`)])
       if (!res.ok) throw new Error((await res.json()).error ?? 'Failed to load pages')
       const data = await res.json() as { items: InventoryItem[] }
       setItems(data.items)
+      if (coverageRes.ok) {
+        const coverage = await coverageRes.json() as Coverage
+        setTwins(new Set(coverage.twins))
+        setAbstracts(coverage.abstracts)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load pages')
     } finally {
@@ -420,6 +434,10 @@ export default function PagesClient({ adminPath, canManage }: { adminPath: strin
                       </th>
                     )
                   })}
+                  {/* Not in COLUMNS: sorting is keyed off the analysis columns,
+                      and this one is about a different question entirely - not
+                      "how good is this page" but "can a model read it at all". */}
+                  <th style={{ padding: '0.5rem', whiteSpace: 'nowrap', fontWeight: 400 }}>Ready for AI</th>
                 </tr>
               </thead>
               <tbody>
@@ -481,10 +499,20 @@ export default function PagesClient({ adminPath, canManage }: { adminPath: strin
                       {relativeDate(item.analyzedAt)}
                       {item.stale && <span className="badge badge-warning" style={{ marginLeft: '0.35rem' }}>out of date</span>}
                     </td>
+                    <td style={{ padding: '0.5rem', whiteSpace: 'nowrap' }}>
+                      {twins.has(item.key)
+                        ? (
+                          <span style={{ display: 'inline-flex', gap: '0.35rem' }}>
+                            <span className="badge badge-success">readable</span>
+                            {abstracts[item.key] && <span className="badge badge-success">summary</span>}
+                          </span>
+                        )
+                        : <span className="badge badge-gray">not built</span>}
+                    </td>
                   </tr>
                 ))}
                 {visible.length === 0 && (
-                  <tr><td colSpan={COLUMNS.length + 1} style={{ padding: '1rem', color: 'var(--color-text-secondary)' }}>Nothing matches that filter.</td></tr>
+                  <tr><td colSpan={COLUMNS.length + 2} style={{ padding: '1rem', color: 'var(--color-text-secondary)' }}>Nothing matches that filter.</td></tr>
                 )}
               </tbody>
             </table>
@@ -524,6 +552,8 @@ export default function PagesClient({ adminPath, canManage }: { adminPath: strin
             item={selected}
             adminPath={adminPath}
             canManage={canManage}
+            abstract={abstracts[selected.key] ?? ''}
+            hasTwin={twins.has(selected.key)}
             onClose={() => setSelectedKey(null)}
             onChanged={load}
           />
@@ -587,10 +617,12 @@ function SummaryTiles({ summary, filters, onPick }: {
   )
 }
 
-function DetailPanel({ item, adminPath, canManage, onClose, onChanged }: {
+function DetailPanel({ item, adminPath, canManage, abstract, hasTwin, onClose, onChanged }: {
   item: PageRow
   adminPath: string
   canManage: boolean
+  abstract: string
+  hasTwin: boolean
   onClose: () => void
   onChanged: () => Promise<void>
 }) {
@@ -603,6 +635,8 @@ function DetailPanel({ item, adminPath, canManage, onClose, onChanged }: {
   const [busy, setBusy] = useState(false)
   const [saveState, setSaveState] = useState('')
   const [error, setError] = useState('')
+  const [aiSummary, setAiSummary] = useState(abstract)
+  const [aiState, setAiState] = useState('')
 
   const isCore = item.entityType === 'core-page'
   const base = `/${adminPath}`
@@ -650,6 +684,30 @@ function DetailPanel({ item, adminPath, canManage, onClose, onChanged }: {
       await onChanged()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not apply the change')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function saveSummary() {
+    setBusy(true)
+    setError('')
+    setAiState('')
+    try {
+      const res = await fetch(`${API}/pages/abstract`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entityType: item.entityType, entityId: item.entityId, abstract: aiSummary }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Could not save the summary')
+      // The twin carries the summary as its opening line, so it is rebuilt as
+      // part of saving. Said out loud because an owner who has just changed the
+      // wording wants to know the published copy changed with it.
+      setAiState(data.rebuilt ? 'Saved, and the Markdown copy rebuilt.' : 'Saved.')
+      await onChanged()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save the summary')
     } finally {
       setBusy(false)
     }
@@ -726,6 +784,32 @@ function DetailPanel({ item, adminPath, canManage, onClose, onChanged }: {
           <button className="btn btn-primary btn-sm" onClick={analyse} disabled={busy}>{busy ? 'Working…' : 'Analyse'}</button>
         </div>
         <p style={helpStyle}>The search phrase this page should win. The analyser scores against it.</p>
+      </div>
+
+      <div style={{ marginBottom: '0.75rem', borderTop: '1px solid var(--color-border)', paddingTop: '0.75rem' }}>
+        <label style={labelStyle} htmlFor="seo-ai-summary-input">Summary for AI readers</label>
+        <textarea
+          id="seo-ai-summary-input"
+          value={aiSummary}
+          onChange={(e) => { setAiSummary(e.target.value); setAiState('') }}
+          rows={2}
+          maxLength={400}
+          style={{ ...inputStyle, resize: 'vertical' }}
+          placeholder="One line an assistant could repeat back to somebody."
+        />
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.35rem' }}>
+          {canManage && (
+            <button className="btn btn-secondary btn-sm" onClick={saveSummary} disabled={busy || aiSummary === abstract}>
+              {busy ? 'Working…' : 'Save summary'}
+            </button>
+          )}
+          {aiState && <span style={{ fontSize: '0.75rem', color: 'var(--color-success)' }}>{aiState}</span>}
+        </div>
+        <p style={helpStyle}>
+          {hasTwin
+            ? <>Opens this page&rsquo;s Markdown copy at <a href={`${item.url === '/' ? '/index' : item.url}.md`} target="_blank" rel="noreferrer">{item.url === '/' ? '/index' : item.url}.md</a>, and is its line in the site index.</>
+            : <>This page has no Markdown copy yet - build one from the AI &amp; agents tab.</>}
+        </p>
       </div>
 
       {error && <div className="alert alert-danger" style={{ marginBottom: '0.75rem' }}>{error}</div>}

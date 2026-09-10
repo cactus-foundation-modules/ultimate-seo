@@ -11,7 +11,7 @@ import type { EntityType, InventoryItem, SeoCheck } from './types'
 
 type RawItem = Omit<InventoryItem, 'focusKeyword' | 'score' | 'checks' | 'analyzedAt'>
 
-async function getActiveModuleNames(): Promise<Set<string>> {
+export async function getActiveModuleNames(): Promise<Set<string>> {
   const rows = await prisma.module.findMany({
     where: { ...INSTALLED_MODULE_WHERE },
     select: { name: true },
@@ -27,7 +27,7 @@ async function getActiveModuleNames(): Promise<Set<string>> {
 // below is read: this module never hard-imports another's, so it works whether
 // or not either is installed. Either read failing falls back to the prefixed
 // form, which is every site's default and was this screen's only answer before.
-async function shopProductsAtRoot(): Promise<boolean> {
+export async function shopProductsAtRoot(): Promise<boolean> {
   try {
     const rows = await prisma.$queryRaw<Array<{ style: string | null }>>`
       SELECT "config" ->> 'productUrlStyle' AS style FROM "shp_settings" WHERE "id" = 'singleton' LIMIT 1
@@ -38,7 +38,7 @@ async function shopProductsAtRoot(): Promise<boolean> {
   }
 }
 
-async function gazettePostsAtRoot(): Promise<boolean> {
+export async function gazettePostsAtRoot(): Promise<boolean> {
   try {
     const rows = await prisma.$queryRaw<Array<{ style: string | null }>>`
       SELECT "post_url_style" AS style FROM "gz_settings" WHERE "id" = 'singleton' LIMIT 1

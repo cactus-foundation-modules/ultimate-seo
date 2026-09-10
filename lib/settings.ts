@@ -1,9 +1,16 @@
 import { prisma } from '@/lib/db/prisma'
+import { AI_CRAWLER_KEYS } from './ai/crawlers'
 import {
+  DEFAULT_AI_SETTINGS,
   DEFAULT_SEARCH_URL_TEMPLATE,
   DEFAULT_STRUCTURED_DATA,
   DEFAULT_TARGETS,
+  ENTITY_TYPES,
   isOrgType,
+  type ContentSignal,
+  type CrawlerStance,
+  type EntityType,
+  type SeoAiSettings,
   type SeoSettings,
   type SeoStructuredData,
   type SeoTargets,
@@ -14,6 +21,7 @@ type SettingsRow = {
   social: Record<string, unknown> | null
   targets: Record<string, unknown> | null
   structured_data: Record<string, unknown> | null
+  ai: Record<string, unknown> | null
 }
 
 function num(v: unknown, fallback: number): number {
@@ -120,7 +128,7 @@ export function normaliseStructuredData(raw: Record<string, unknown> | null): Se
 
 export async function getSeoSettings(): Promise<SeoSettings> {
   const rows = await prisma.$queryRaw<SettingsRow[]>`
-    SELECT "organization", "social", "targets", "structured_data" FROM "seo_settings" WHERE "id" = 'singleton'
+    SELECT "organization", "social", "targets", "structured_data", "ai" FROM "seo_settings" WHERE "id" = 'singleton'
   `
   const row = rows[0]
   const org = row?.organization ?? null
@@ -135,10 +143,20 @@ export async function getSeoSettings(): Promise<SeoSettings> {
     social: { twitterHandle: str(row?.social?.twitterHandle) },
     targets: normaliseTargets(row?.targets ?? null),
     structuredData: normaliseStructuredData(row?.structured_data ?? null),
+    ai: normaliseAiSettings(row?.ai ?? null),
   }
 }
 
-export async function saveSeoSettings(settings: SeoSettings): Promise<void> {
+/**
+ * Writes every column this form owns - and deliberately NOT "ai".
+ *
+ * The structured-data column is in here because it once was not, and the
+ * general settings form quietly blanked it every time it saved. Rather than add
+ * a second thing every caller has to remember to carry through, the AI settings
+ * get their own writer below and this statement never names their column: a
+ * column nobody writes cannot be a column somebody accidentally clears.
+ */
+export async function saveSeoSettings(settings: Omit<SeoSettings, 'ai'>): Promise<void> {
   const organization = JSON.stringify(settings.organization)
   const social = JSON.stringify(settings.social)
   const targets = JSON.stringify(normaliseTargets(settings.targets as unknown as Record<string, unknown>))
@@ -153,6 +171,93 @@ export async function saveSeoSettings(settings: SeoSettings): Promise<void> {
       "social" = EXCLUDED."social",
       "targets" = EXCLUDED."targets",
       "structured_data" = EXCLUDED."structured_data",
+      "updated_at" = CURRENT_TIMESTAMP
+  `
+}
+
+
+// ---------------------------------------------------------------------------
+// The AI half
+// ---------------------------------------------------------------------------
+
+function signal(v: unknown, fallback: ContentSignal): ContentSignal {
+  return v === 'yes' || v === 'no' || v === 'unset' ? v : fallback
+}
+
+function entityTypes(v: unknown): EntityType[] {
+  if (!Array.isArray(v)) return [...ENTITY_TYPES]
+  const allowed = new Set<string>(ENTITY_TYPES)
+  const picked = v.filter((t): t is EntityType => typeof t === 'string' && allowed.has(t))
+  // An empty list is a real answer - "no Markdown twins at all" - and is left as
+  // one. Only a column that has never been written falls back to everything.
+  return [...new Set(picked)]
+}
+
+function crawlerPolicy(v: unknown): Record<string, CrawlerStance> {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {}
+  const out: Record<string, CrawlerStance> = {}
+  for (const [key, value] of Object.entries(v as Record<string, unknown>)) {
+    // A key that is not a crawler this build knows about is dropped rather than
+    // kept: it would otherwise become a User-agent line naming nothing, and a
+    // robots.txt full of those is how an owner stops trusting the file.
+    if (!AI_CRAWLER_KEYS.has(key)) continue
+    if (value === 'allow' || value === 'block') out[key] = value
+  }
+  return out
+}
+
+/**
+ * Every field defaulted individually rather than spread over the defaults, for
+ * the same reason normaliseStructuredData does it: the column is JSONB, so its
+ * contents are whatever shape was written the day it was written.
+ */
+export function normaliseAiSettings(raw: Record<string, unknown> | null): SeoAiSettings {
+  const d = DEFAULT_AI_SETTINGS
+  const signals = (raw?.contentSignals ?? null) as Record<string, unknown> | null
+  return {
+    siteSummary: str(raw?.siteSummary).slice(0, 2000),
+    llmsTxt: bool(raw?.llmsTxt, d.llmsTxt),
+    llmsFull: bool(raw?.llmsFull, d.llmsFull),
+    markdown: bool(raw?.markdown, d.markdown),
+    markdownTypes: raw && 'markdownTypes' in raw ? entityTypes(raw.markdownTypes) : [...d.markdownTypes],
+    abstracts: bool(raw?.abstracts, d.abstracts),
+    pageStructuredData: bool(raw?.pageStructuredData, d.pageStructuredData),
+    pageMarkdownLink: bool(raw?.pageMarkdownLink, d.pageMarkdownLink),
+    analytics: bool(raw?.analytics, d.analytics),
+    analyticsRetentionDays: Math.min(730, Math.max(7, num(raw?.analyticsRetentionDays, d.analyticsRetentionDays))),
+    mcp: bool(raw?.mcp, d.mcp),
+    mcpMaxResults: Math.min(100, Math.max(1, num(raw?.mcpMaxResults, d.mcpMaxResults))),
+    crawlerPolicy: crawlerPolicy(raw?.crawlerPolicy),
+    contentSignals: {
+      search: signal(signals?.search, d.contentSignals.search),
+      aiInput: signal(signals?.aiInput, d.contentSignals.aiInput),
+      aiTrain: signal(signals?.aiTrain, d.contentSignals.aiTrain),
+    },
+  }
+}
+
+/** Reads the AI settings alone, for the public paths that need nothing else. */
+export async function getAiSettings(): Promise<SeoAiSettings> {
+  try {
+    const rows = await prisma.$queryRaw<Array<{ ai: Record<string, unknown> | null }>>`
+      SELECT "ai" FROM "seo_settings" WHERE "id" = 'singleton'
+    `
+    return normaliseAiSettings(rows[0]?.ai ?? null)
+  } catch {
+    // No settings row yet, or the column not migrated in: the defaults are a
+    // perfectly good answer and are what a fresh install would have read anyway.
+    return { ...DEFAULT_AI_SETTINGS, markdownTypes: [...DEFAULT_AI_SETTINGS.markdownTypes] }
+  }
+}
+
+/** Writes the "ai" column and nothing else. See saveSeoSettings for why. */
+export async function saveAiSettings(ai: SeoAiSettings): Promise<void> {
+  const json = JSON.stringify(normaliseAiSettings(ai as unknown as Record<string, unknown>))
+  await prisma.$executeRaw`
+    INSERT INTO "seo_settings" ("id", "ai", "updated_at")
+    VALUES ('singleton', ${json}::jsonb, CURRENT_TIMESTAMP)
+    ON CONFLICT ("id") DO UPDATE SET
+      "ai" = EXCLUDED."ai",
       "updated_at" = CURRENT_TIMESTAMP
   `
 }

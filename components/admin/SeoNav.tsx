@@ -4,13 +4,14 @@ import { usePathname } from 'next/navigation'
 import { useAdminPath } from '@/components/admin/AdminPathContext'
 import { TabStrip } from '@/components/admin/TabStrip'
 
-// One sidebar link for SEO, with its five surfaces as tabs on the page.
+// One sidebar link for SEO, with its six surfaces as tabs on the page.
 // The dashboard sits at the module root, so it matches exactly rather than by
 // prefix - a prefix match there would light up on every other tab too.
 const TABS = [
   { label: 'Dashboard', segment: '', manageOnly: false },
   { label: 'Pages', segment: 'pages', manageOnly: false },
   { label: 'Site audit', segment: 'audit', manageOnly: false },
+  { label: 'AI & agents', segment: 'ai', manageOnly: false },
   { label: 'Structured data', segment: 'structured-data', manageOnly: true },
   { label: 'Sitemap & robots', segment: 'indexing', manageOnly: true },
 ]

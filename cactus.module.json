@@ -1,9 +1,9 @@
 {
   "name": "ultimate-seo",
-  "version": "0.1.11",
+  "version": "0.1.13",
   "tablePrefix": "seo_",
-  "description": "The one-stop SEO command centre for Cactus: site-wide SEO scoring, page-by-page analysis with one-click fixes, a full site crawl audit, sitemap and robots controls, and structured data blocks for the page builder.",
-  "requiresCoreVersion": "0.5.1418",
+  "description": "The one-stop SEO command centre for Cactus: site-wide SEO scoring, page-by-page analysis with one-click fixes, a full site crawl audit, sitemap and robots controls, structured data blocks for the page builder, and the AI half - llms.txt, a Markdown twin of every page, AI crawler controls, AI referral figures and a read-only endpoint agents can query.",
+  "requiresCoreVersion": "0.5.1565",
   "permissions": [
     "seo.view",
     "seo.manage"
@@ -33,12 +33,18 @@
     "seo_audit_runs",
     "seo_audit_issues",
     "seo_robots_rules",
-    "seo_sitemap_entries"
+    "seo_sitemap_entries",
+    "seo_llm_documents",
+    "seo_ai_hits"
   ],
   "cronJobs": [
     {
       "path": "/api/m/ultimate-seo/cron/audit",
       "schedule": "0 4 * * 1"
+    },
+    {
+      "path": "/api/m/ultimate-seo/cron/ai",
+      "schedule": "0 3 * * *"
     }
   ],
   "puckBlocks": [
@@ -53,6 +59,15 @@
       "import": "./components/puck/FaqBlock",
       "component": "seoFaqPuckComponent",
       "rscComponent": "seoFaqPuckRscComponent"
+    }
+  ],
+  "extensionPoints": [
+    {
+      "point": "core.agent-content",
+      "id": "ultimate-seo",
+      "import": "./lib/agent-content",
+      "component": "ultimateSeoAgentContent",
+      "serverOnly": true
     }
   ]
 }

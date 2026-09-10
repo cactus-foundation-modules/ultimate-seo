@@ -1,0 +1,20 @@
+-- Ultimate SEO - the facts a page's structured data and its Markdown-twin link
+-- are built from.
+--
+-- A new numbered file rather than an edit to 003, per the module migration rule.
+--
+-- Deliberately the FACTS and not the finished JSON-LD. Structured data is full
+-- of absolute URLs - @id, url, image, every breadcrumb step - and a table of
+-- twenty thousand rows with a hostname baked into each one is a table that has
+-- to be rebuilt to answer a domain move. This platform's one live site moved
+-- domain in its first year, and the same rows are read on preview deployments
+-- under another name entirely. So the row holds names, paths and dates, and the
+-- page builds the JSON-LD from them against whatever host it is being served on.
+--
+-- Shape (see lib/ai/json-ld.ts, PageFacts):
+-- {
+--   kind, title, description, breadcrumb: [{ name, path }],
+--   image, publishedAt, author, items: [{ name, path }],
+--   telephone, email, address, website
+-- }
+ALTER TABLE "seo_llm_documents" ADD COLUMN IF NOT EXISTS "page_facts" JSONB;
