@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   absoluteUrl,
   buildOrganizationJsonLd,
+  buildReturnPolicyJsonLd,
   buildSiteJsonLd,
   buildWebSiteJsonLd,
   organizationId,
@@ -275,5 +276,80 @@ describe('a complete hand-written record, rebuilt from fields alone', () => {
       },
       sameAs: ['https://find-and-update.company-information.service.gov.uk/company/17332661'],
     })
+  })
+})
+
+describe('buildReturnPolicyJsonLd', () => {
+  it('is null until the owner has stated a category', () => {
+    expect(buildReturnPolicyJsonLd(DEFAULT_STRUCTURED_DATA, ctx)).toBeNull()
+  })
+
+  it('states a finite window with its days, method and fees', () => {
+    const policy = buildReturnPolicyJsonLd(profile({
+      addressCountry: 'GB',
+      returnPolicyCategory: 'MerchantReturnFiniteReturnWindow',
+      returnDays: 30,
+      returnMethod: 'ReturnByMail',
+      returnFees: 'FreeReturn',
+      returnPolicyUrl: '/returns',
+    }), ctx)
+    expect(policy).toMatchObject({
+      '@type': 'MerchantReturnPolicy',
+      returnPolicyCategory: 'https://schema.org/MerchantReturnFiniteReturnWindow',
+      merchantReturnDays: 30,
+      returnMethod: 'https://schema.org/ReturnByMail',
+      returnFees: 'https://schema.org/FreeReturn',
+      applicableCountry: 'GB',
+      merchantReturnLink: 'https://example.com/returns',
+    })
+  })
+
+  // A window on a policy that has no window is the contradiction that gets the
+  // whole block ignored rather than the half that disagreed.
+  it('leaves the day count off anything but a finite window', () => {
+    const policy = buildReturnPolicyJsonLd(profile({
+      returnPolicyCategory: 'MerchantReturnUnlimitedWindow',
+      returnDays: 30,
+    }), ctx)
+    expect(policy).not.toHaveProperty('merchantReturnDays')
+  })
+
+  it('says nothing about method or fees when returns are refused', () => {
+    const policy = buildReturnPolicyJsonLd(profile({
+      returnPolicyCategory: 'MerchantReturnNotPermitted',
+      returnMethod: 'ReturnByMail',
+      returnFees: 'FreeReturn',
+    }), ctx)
+    expect(policy).not.toHaveProperty('returnMethod')
+    expect(policy).not.toHaveProperty('returnFees')
+  })
+
+  it('publishes a fee only when it carries a currency', () => {
+    const without = buildReturnPolicyJsonLd(profile({
+      returnPolicyCategory: 'MerchantReturnFiniteReturnWindow',
+      returnFees: 'ReturnShippingFees',
+      returnFeeAmount: 4.99,
+    }), ctx)
+    expect(without).not.toHaveProperty('returnShippingFeesAmount')
+
+    const withCurrency = buildReturnPolicyJsonLd(profile({
+      returnPolicyCategory: 'MerchantReturnFiniteReturnWindow',
+      returnFees: 'ReturnShippingFees',
+      returnFeeAmount: 4.99,
+      returnFeeCurrency: 'GBP',
+    }), ctx)
+    expect(withCurrency).toMatchObject({
+      returnShippingFeesAmount: { '@type': 'MonetaryAmount', value: 4.99, currency: 'GBP' },
+    })
+  })
+
+  it('hangs off the organisation rather than standing on its own', () => {
+    const org = buildOrganizationJsonLd(profile({
+      name: 'Deskwell',
+      emitOrganization: true,
+      returnPolicyCategory: 'MerchantReturnFiniteReturnWindow',
+      returnDays: 30,
+    }), ctx)
+    expect(org?.hasMerchantReturnPolicy).toMatchObject({ merchantReturnDays: 30 })
   })
 })

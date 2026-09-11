@@ -124,6 +124,42 @@ export const CONTACT_TYPES = [
 export type ContactType = (typeof CONTACT_TYPES)[number]
 
 /**
+ * Return policy, in schema.org's own vocabulary.
+ *
+ * Worth the six fields. An assistant weighing up whether to put a shop in front
+ * of somebody is weighing up what happens when the thing turns out to be wrong,
+ * and a site that answers that question in machine-readable form has answered it
+ * before it is asked. Google reads the same block for Merchant Center, so the
+ * work counts twice.
+ *
+ * Every one of them is optional and blank means "not stated" - a policy nobody
+ * has typed in is not a policy of "no returns", and publishing it as one would
+ * be putting words in an owner's mouth.
+ */
+export const RETURN_POLICY_CATEGORIES = [
+  'MerchantReturnFiniteReturnWindow',
+  'MerchantReturnUnlimitedWindow',
+  'MerchantReturnNotPermitted',
+] as const
+export type ReturnPolicyCategory = (typeof RETURN_POLICY_CATEGORIES)[number]
+
+export const RETURN_METHODS = ['ReturnByMail', 'ReturnInStore', 'ReturnAtKiosk'] as const
+export type ReturnMethod = (typeof RETURN_METHODS)[number]
+
+export const RETURN_FEES = ['FreeReturn', 'ReturnShippingFees', 'RestockingFees'] as const
+export type ReturnFees = (typeof RETURN_FEES)[number]
+
+export function isReturnPolicyCategory(v: unknown): v is ReturnPolicyCategory {
+  return typeof v === 'string' && (RETURN_POLICY_CATEGORIES as readonly string[]).includes(v)
+}
+export function isReturnMethod(v: unknown): v is ReturnMethod {
+  return typeof v === 'string' && (RETURN_METHODS as readonly string[]).includes(v)
+}
+export function isReturnFees(v: unknown): v is ReturnFees {
+  return typeof v === 'string' && (RETURN_FEES as readonly string[]).includes(v)
+}
+
+/**
  * The site-wide structured data profile: everything needed to describe the
  * business behind the site once, emitted on every public page.
  *
@@ -180,6 +216,24 @@ export type SeoStructuredData = {
   contactTelephone: string
   contactAreaServed: string[]
   contactAvailableLanguage: string[]
+  /** Returns, as schema.org states them. Blank category means "not stated". */
+  returnPolicyCategory: ReturnPolicyCategory | ''
+  /** Days to return, for a finite window. Ignored for the other two categories. */
+  returnDays: number | null
+  returnMethod: ReturnMethod | ''
+  returnFees: ReturnFees | ''
+  /** What a return costs the buyer, when the fees are theirs to pay. */
+  returnFeeAmount: number | null
+  /**
+   * Currency for that fee, ISO 4217. Typed rather than read from the shop: this
+   * block is emitted in the head of every public page, and a figure that costs
+   * a database query per render to label is a figure that is not worth having.
+   */
+  returnFeeCurrency: string
+  /** Where the policy applies. Blank falls back to the business's own country. */
+  returnPolicyCountry: string
+  /** The page a person can read it on. */
+  returnPolicyUrl: string
   emitOrganization: boolean
   emitWebSite: boolean
   emitSearchAction: boolean
@@ -224,6 +278,14 @@ export const DEFAULT_STRUCTURED_DATA: SeoStructuredData = {
   contactTelephone: '',
   contactAreaServed: [],
   contactAvailableLanguage: [],
+  returnPolicyCategory: '',
+  returnDays: null,
+  returnMethod: '',
+  returnFees: '',
+  returnFeeAmount: null,
+  returnFeeCurrency: '',
+  returnPolicyCountry: '',
+  returnPolicyUrl: '',
   // Off until the owner has filled the profile in and looked at the preview.
   // Publishing a half-built Organization block on every page of the site the
   // moment the module updates is not a decision this module gets to make.
@@ -345,6 +407,15 @@ export type SeoAiSettings = {
   analytics: boolean
   /** Days of counts to keep. The weekly job drops anything older. */
   analyticsRetentionDays: number
+  /**
+   * Name the supplier behind each product in its Markdown twin.
+   *
+   * A reseller's supplier list is commercial information, and the twins publish
+   * it to anything that asks. Left on because that is what the twins already
+   * did, and an update that quietly stopped publishing a field is an update that
+   * changed a live site's output without being asked to.
+   */
+  publishSupplier: boolean
   /** Serve the read-only agent endpoint. Costs money; see the screen. */
   mcp: boolean
   /** Most rows one agent search may return. */
@@ -378,6 +449,9 @@ export const DEFAULT_AI_SETTINGS: SeoAiSettings = {
   pageMarkdownLink: false,
   analytics: false,
   analyticsRetentionDays: 90,
+  // On, because the twins already carried it. Worth a look for any shop that
+  // would rather its competitors did not read who it buys from.
+  publishSupplier: true,
   mcp: false,
   mcpMaxResults: 25,
   // Empty, not "everything blocked": robots.txt says nothing about these
@@ -388,6 +462,43 @@ export const DEFAULT_AI_SETTINGS: SeoAiSettings = {
 }
 
 /** One materialised Markdown twin. */
+/**
+ * How a product can be bought, as a handful of values rather than as prose.
+ *
+ * The Markdown twin is written for a reader that will read it. An assistant
+ * asked "office chairs under £250 that you can have this week" is not going to
+ * read four hundred of them - it wants the catalogue narrowed, and something
+ * that cannot narrow a catalogue gets replaced by something that can.
+ *
+ * Money is stored as the STOREFRONT prints it, tax adjustment already applied,
+ * with the shop's own wording alongside. A figure quoted to a shopper that turns
+ * out to have been net is worse than no figure at all.
+ */
+export type ProductFacets = {
+  kind: 'product'
+  /** ISO 4217, from the shop's own settings. */
+  currency: string
+  /** Lowest and highest a buyer can actually pay. Equal when there is one price. */
+  priceMin: number | null
+  priceMax: number | null
+  /** The shop's own tax wording, e.g. "ex VAT". Empty when it has set none. */
+  priceSuffix: string
+  availability: ProductAvailability
+  sku: string | null
+  /**
+   * Every category and collection this is filed under - names AND slugs, both
+   * lowercased. An agent that has read one page knows the words a shopper uses,
+   * not the slugs an editor typed, so both are matchable.
+   */
+  groups: string[]
+}
+
+export const PRODUCT_AVAILABILITY = ['in-stock', 'made-to-order', 'pre-order', 'backorder', 'out-of-stock'] as const
+export type ProductAvailability = (typeof PRODUCT_AVAILABILITY)[number]
+
+/** What a document's facets column holds. Only products have any today. */
+export type DocumentFacets = ProductFacets
+
 export type LlmDocumentRow = {
   id: string
   entity_type: string
@@ -399,6 +510,7 @@ export type LlmDocumentRow = {
   byte_size: number
   source_updated_at: Date | null
   built_at: Date
+  facets: DocumentFacets | null
 }
 
 export type AiHitRow = {

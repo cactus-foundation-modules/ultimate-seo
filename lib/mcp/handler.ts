@@ -10,13 +10,15 @@ import {
   fail,
   numberParam,
   ok,
+  optionalNumberParam,
   stringParam,
   textResult,
   type JsonRpcRequest,
   type JsonRpcResponse,
 } from './protocol'
 import { absolutiseMarkdown } from '../ai/absolutise'
-import { getPageMarkdown, getSiteInfo, listSections, searchSite, toolDefinitions } from './tools'
+import { findProducts, getPageMarkdown, getSiteInfo, listSections, searchSite, toolDefinitions, type ProductFilter, type SearchHit } from './tools'
+import { PRODUCT_AVAILABILITY, type ProductAvailability } from '../types'
 
 const ENTITY_TYPE_VALUES = new Set([
   'core-page', 'gazette-post', 'shop-product', 'shop-category',
@@ -31,6 +33,36 @@ export type McpContext = {
   maxResults: number
 }
 
+const AVAILABILITY_LABEL: Record<ProductAvailability, string> = {
+  'in-stock': 'In stock',
+  'made-to-order': 'Made to order',
+  'pre-order': 'Available to pre-order',
+  backorder: 'On backorder',
+  'out-of-stock': 'Out of stock',
+}
+
+/**
+ * The price and the stock on the hit itself, rather than buried in the summary.
+ *
+ * An agent comparing three shops compares the numbers it was handed. Making it
+ * fetch each product's Markdown to find out what the thing costs is three extra
+ * round trips it will not make.
+ */
+function facetLine(hit: SearchHit): string {
+  const facets = hit.facets
+  if (!facets) return ''
+  const parts: string[] = []
+  if (facets.priceMin !== null) {
+    const money = (n: number) => `${facets.currency} ${n.toFixed(2)}`
+    const price = facets.priceMax !== null && facets.priceMax > facets.priceMin
+      ? `${money(facets.priceMin)} to ${money(facets.priceMax)}`
+      : money(facets.priceMin)
+    parts.push(facets.priceSuffix ? `${price} ${facets.priceSuffix}` : price)
+  }
+  parts.push(AVAILABILITY_LABEL[facets.availability])
+  return `\n  ${parts.join(' - ')}`
+}
+
 function formatHits(hits: Awaited<ReturnType<typeof searchSite>>, siteUrl: string): string {
   // Not a full stop. An agent told only "nothing matches" concludes the site
   // does not sell the thing and goes elsewhere; told where to look next, it
@@ -42,7 +74,7 @@ function formatHits(hits: Awaited<ReturnType<typeof searchSite>>, siteUrl: strin
     .map((hit) => {
       const url = `${siteUrl}/${hit.path === 'index' ? '' : hit.path}`.replace(/\/$/, '') || siteUrl
       const summary = hit.summary ? `\n  ${hit.summary}` : ''
-      return `- ${hit.title} (${hit.kind})\n  ${url}\n  Markdown: ${siteUrl}/${hit.path}.md${summary}`
+      return `- ${hit.title} (${hit.kind})\n  ${url}\n  Markdown: ${siteUrl}/${hit.path}.md${facetLine(hit)}${summary}`
     })
     .join('\n')
 }
@@ -56,6 +88,29 @@ async function callTool(name: string, params: Record<string, unknown> | undefine
       const type = ENTITY_TYPE_VALUES.has(rawType) ? rawType : null
       const limit = numberParam(params, 'limit', Math.min(10, ctx.maxResults), ctx.maxResults)
       return textResult(formatHits(await searchSite(query, type, limit), ctx.siteUrl))
+    }
+    case 'find_products': {
+      const rawSort = stringParam(params, 'sort')
+      const rawAvailability = stringParam(params, 'availability')
+      const filter: ProductFilter = {
+        query: stringParam(params, 'query'),
+        category: stringParam(params, 'category'),
+        minPrice: optionalNumberParam(params, 'min_price'),
+        maxPrice: optionalNumberParam(params, 'max_price'),
+        availability: (PRODUCT_AVAILABILITY as readonly string[]).includes(rawAvailability)
+          ? (rawAvailability as ProductAvailability)
+          : null,
+        sort: rawSort === 'price-low-to-high' || rawSort === 'price-high-to-low' ? rawSort : 'relevance',
+      }
+      const limit = numberParam(params, 'limit', Math.min(10, ctx.maxResults), ctx.maxResults)
+      const hits = await findProducts(filter, limit)
+      if (hits.length === 0) {
+        // Which filter did the damage is the one thing the caller cannot see,
+        // and the difference between "loosen the budget" and "this shop sells
+        // nothing of the kind" decides whether it asks again or goes elsewhere.
+        return textResult('Nothing in the catalogue matches all of that. Try a wider price range, drop the category, or use search_site for a plain text search.')
+      }
+      return textResult(formatHits(hits, ctx.siteUrl))
     }
     case 'get_page': {
       const path = stringParam(params, 'path')
@@ -110,7 +165,7 @@ export async function handleMcpRequest(request: JsonRpcRequest, ctx: McpContext)
         instructions: [
           `Read-only access to everything ${ctx.siteName} publishes.`,
           ctx.siteSummary.trim(),
-          'Start with get_site_info to learn who runs this site and where it trades, then list_sections, then search_site, then get_page for the full text of anything worth reading.',
+          'Start with get_site_info to learn who runs this site and where it trades, then list_sections, then search_site, then get_page for the full text of anything worth reading. Where the question carries a budget, a deadline or a category, use find_products rather than search_site.',
         ].filter(Boolean).join(' '),
       })
     }

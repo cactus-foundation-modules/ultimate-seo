@@ -39,6 +39,45 @@ function addressLine(sd: SeoStructuredData): string {
 }
 
 /**
+ * The return policy in a sentence, because the reader of this file is going to
+ * quote it in one.
+ *
+ * The same profile the JSON-LD MerchantReturnPolicy is built from, said in
+ * English: an assistant deciding whether to recommend a shop is deciding what
+ * happens when the thing turns out to be wrong, and "30 days, free, by post"
+ * answers that in a way "MerchantReturnFiniteReturnWindow" does not.
+ */
+export function returnsLine(sd: SeoStructuredData): string {
+  if (!sd.returnPolicyCategory) return ''
+  if (sd.returnPolicyCategory === 'MerchantReturnNotPermitted') return 'Not accepted'
+
+  const parts: string[] = []
+  if (sd.returnPolicyCategory === 'MerchantReturnUnlimitedWindow') parts.push('Any time')
+  else if (sd.returnDays !== null) parts.push(`Within ${sd.returnDays} days`)
+  else parts.push('Accepted')
+
+  const method: Record<string, string> = {
+    ReturnByMail: 'by post',
+    ReturnInStore: 'in store',
+    ReturnAtKiosk: 'at a collection point',
+  }
+  if (sd.returnMethod) parts.push(method[sd.returnMethod] ?? '')
+
+  if (sd.returnFees === 'FreeReturn') parts.push('free of charge')
+  else if (sd.returnFees === 'ReturnShippingFees') {
+    parts.push(
+      sd.returnFeeAmount !== null && sd.returnFeeCurrency
+        ? `return postage ${sd.returnFeeCurrency} ${sd.returnFeeAmount.toFixed(2)}, paid by the buyer`
+        : 'return postage paid by the buyer'
+    )
+  } else if (sd.returnFees === 'RestockingFees') parts.push('a restocking fee applies')
+
+  const sentence = parts.filter(Boolean).join(', ')
+  const url = clean(sd.returnPolicyUrl)
+  return url ? `${sentence} (${url})` : sentence
+}
+
+/**
  * Every fact worth publishing, in the order a reader wants them: what the
  * business is called, proof it exists, where it is, who it serves, how to reach
  * it, and where else it can be found.
@@ -73,6 +112,10 @@ export function businessFacts(sd: SeoStructuredData, fallbackName: string): Fact
   push('Sells to', sd.areaServed.map(clean).filter(Boolean).join(', '))
   push('Typical prices', clean(sd.priceRange))
   push('Opening hours', sd.openingHours.map(clean).filter(Boolean).join('; '))
+
+  // Above the contact details on purpose. A reader with room for six lines
+  // wants to know the terms before it is told the phone number.
+  push('Returns', returnsLine(sd))
 
   push('Email', clean(sd.email) || clean(sd.contactEmail))
   push('Telephone', clean(sd.telephone) || clean(sd.contactTelephone))

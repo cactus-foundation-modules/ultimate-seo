@@ -80,7 +80,14 @@ function indexLine(row: DocumentIndexRow, siteUrl: string): string {
   return row.summary ? `- [${label}](${url}): ${row.summary}` : `- [${label}](${url})`
 }
 
-function renderIndex(facts: SiteFacts, siteUrl: string, rows: DocumentIndexRow[], settings: SeoAiSettings): string {
+function renderIndex(
+  facts: SiteFacts,
+  siteUrl: string,
+  rows: DocumentIndexRow[],
+  settings: SeoAiSettings,
+  /** True when this index is the head of llms-full.txt, which is that file. */
+  inlined = false,
+): string {
   const byType = new Map<string, DocumentIndexRow[]>()
   for (const row of rows) {
     const list = byType.get(row.entity_type)
@@ -98,6 +105,13 @@ function renderIndex(facts: SiteFacts, siteUrl: string, rows: DocumentIndexRow[]
   // worse than a file that admits it holds nothing.
   if (rows.length > 0 && settings.markdown) {
     parts.push('Every page below is also available as Markdown at the same address with `.md` on the end.')
+  }
+
+  // Named here or nowhere. A reader holding the index has no way of guessing
+  // that a second file exists with the documents already inlined, and the whole
+  // point of that file is to save it the round trips it is about to make.
+  if (rows.length > 0 && settings.llmsFull && !inlined) {
+    parts.push(`Everything except the product pages is also available inlined in one file at ${siteUrl}/llms-full.txt.`)
   }
 
   // Who this actually is. Placed above the page lists on purpose: a reader with a
@@ -168,7 +182,7 @@ export async function buildLlmsFull(siteUrl: string, settings: SeoAiSettings): P
     listDocumentBodies(wanted, FULL_TEXT_MAX_DOCUMENTS),
   ])
 
-  const parts = [renderIndex(facts, siteUrl, rows, settings).trim(), '---', '# Full text']
+  const parts = [renderIndex(facts, siteUrl, rows, settings, true).trim(), '---', '# Full text']
   let bytes = parts.join('').length
   let included = 0
 

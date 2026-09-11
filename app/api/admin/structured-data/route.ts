@@ -6,7 +6,13 @@ import { resolveSiteUrl } from '@/lib/seo/site-url'
 import { requireSeoPermission } from '@/modules/ultimate-seo/lib/auth'
 import { getSeoSettings, normaliseStructuredData, saveSeoSettings } from '@/modules/ultimate-seo/lib/settings'
 import { buildSiteJsonLd } from '@/modules/ultimate-seo/lib/structured-data'
-import { ORG_TYPES, type SeoStructuredData } from '@/modules/ultimate-seo/lib/types'
+import {
+  ORG_TYPES,
+  RETURN_FEES,
+  RETURN_METHODS,
+  RETURN_POLICY_CATEGORIES,
+  type SeoStructuredData,
+} from '@/modules/ultimate-seo/lib/types'
 
 // The preview is built by the same buildSiteJsonLd the live pages use, from the
 // values in the request rather than from the saved row, so what the owner reads
@@ -80,6 +86,15 @@ const Body = z.object({
   contactTelephone: z.string().max(60),
   contactAreaServed: z.array(Line).max(30),
   contactAvailableLanguage: z.array(Line).max(20),
+  // Blank is a real answer on all three - "not stated", which publishes nothing.
+  returnPolicyCategory: z.union([z.enum(RETURN_POLICY_CATEGORIES), z.literal('')]),
+  returnDays: z.number().int().min(1).max(3650).nullable(),
+  returnMethod: z.union([z.enum(RETURN_METHODS), z.literal('')]),
+  returnFees: z.union([z.enum(RETURN_FEES), z.literal('')]),
+  returnFeeAmount: z.number().min(0).max(1_000_000).nullable(),
+  returnFeeCurrency: z.string().max(10),
+  returnPolicyCountry: z.string().max(60),
+  returnPolicyUrl: z.string().max(500),
   emitOrganization: z.boolean(),
   emitWebSite: z.boolean(),
   emitSearchAction: z.boolean(),

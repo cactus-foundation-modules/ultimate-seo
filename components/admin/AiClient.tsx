@@ -272,6 +272,14 @@ export default function AiClient({ canManage, siteUrl }: { canManage: boolean; s
           onChange={(v) => update({ markdown: v })}
         />
 
+        <Toggle
+          label="Name the supplier on each product"
+          help="Product twins list who the item comes from. Handy on a site that wants the brand named; less so on one whose suppliers are its own business, since anything that can read the page can read this."
+          checked={settings.publishSupplier}
+          disabled={!settings.markdown && !settings.llmsTxt}
+          onChange={(v) => update({ publishSupplier: v })}
+        />
+
         <div style={{ margin: '1rem 0' }}>
           <span style={labelStyle}>Which content gets a twin</span>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem' }}>

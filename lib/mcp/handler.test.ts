@@ -5,6 +5,7 @@ vi.mock('./tools', async () => {
   return {
     ...actual,
     searchSite: vi.fn(),
+    findProducts: vi.fn(),
     getPageMarkdown: vi.fn(),
     listSections: vi.fn(),
     getSiteInfo: vi.fn(),
@@ -12,12 +13,13 @@ vi.mock('./tools', async () => {
 })
 
 import { handleMcpRequest } from './handler'
-import { getPageMarkdown, getSiteInfo, listSections, searchSite } from './tools'
+import { findProducts, getPageMarkdown, getSiteInfo, listSections, searchSite } from './tools'
 
 const ctx = { siteName: 'Deskwell', siteUrl: 'https://example.com', siteSummary: 'Office furniture for UK businesses.', maxResults: 25 }
 
 beforeEach(() => {
   vi.mocked(searchSite).mockReset()
+  vi.mocked(findProducts).mockReset()
   vi.mocked(getPageMarkdown).mockReset()
   vi.mocked(listSections).mockReset()
   vi.mocked(getSiteInfo).mockReset()
@@ -44,7 +46,7 @@ describe('handleMcpRequest', () => {
   it('lists its tools', async () => {
     const res = await handleMcpRequest({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, ctx)
     const names = (res!.result as { tools: Array<{ name: string }> }).tools.map((t) => t.name)
-    expect(names).toEqual(['search_site', 'get_page', 'list_sections', 'get_site_info'])
+    expect(names).toEqual(['search_site', 'get_page', 'list_sections', 'find_products', 'get_site_info'])
   })
 
   it('points a new client at get_site_info first', async () => {
@@ -85,7 +87,7 @@ describe('handleMcpRequest', () => {
 
   it('searches and formats the hits with both addresses', async () => {
     vi.mocked(searchSite).mockResolvedValue([
-      { path: 'shop/products/task-chair', title: 'Task chair', summary: 'A firm one.', kind: 'Product' },
+      { path: 'shop/products/task-chair', title: 'Task chair', summary: 'A firm one.', kind: 'Product', facets: null },
     ])
     const res = await handleMcpRequest(
       { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'search_site', arguments: { query: 'chair' } } },
@@ -208,5 +210,87 @@ describe('handleMcpRequest', () => {
       ctx,
     )
     expect((res!.result as { content: Array<{ text: string }> }).content[0]!.text).toBe('- Product: 20345')
+  })
+})
+
+describe('find_products', () => {
+  const chair = {
+    path: 'task-chair',
+    title: 'Task chair',
+    summary: 'A firm one.',
+    kind: 'Product',
+    facets: {
+      kind: 'product' as const,
+      currency: 'GBP',
+      priceMin: 199,
+      priceMax: 249,
+      priceSuffix: 'ex VAT',
+      availability: 'in-stock' as const,
+      sku: 'TC-1',
+      groups: ['office chairs', 'office-chairs'],
+    },
+  }
+
+  const call = (args: Record<string, unknown>) => handleMcpRequest(
+    { jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'find_products', arguments: args } },
+    ctx,
+  )
+
+  const textOf = (res: Awaited<ReturnType<typeof handleMcpRequest>>) =>
+    (res!.result as { content: Array<{ text: string }> }).content[0]!.text
+
+  it('is offered in the tool list', async () => {
+    const res = await handleMcpRequest({ jsonrpc: '2.0', id: 1, method: 'tools/list' }, ctx)
+    const names = (res!.result as { tools: Array<{ name: string }> }).tools.map((t) => t.name)
+    expect(names).toContain('find_products')
+  })
+
+  it('passes the filters through, normalised', async () => {
+    vi.mocked(findProducts).mockResolvedValue([chair])
+    await call({ query: ' mesh ', category: 'Office Chairs', max_price: 250, availability: 'in-stock', sort: 'price-low-to-high' })
+    expect(findProducts).toHaveBeenCalledWith(
+      { query: 'mesh', category: 'Office Chairs', minPrice: null, maxPrice: 250, availability: 'in-stock', sort: 'price-low-to-high' },
+      10,
+    )
+  })
+
+  // A budget arriving as a string and being read as "no budget" is the failure
+  // that hands somebody a list of things they cannot afford.
+  it('reads a price sent as a string', async () => {
+    vi.mocked(findProducts).mockResolvedValue([chair])
+    await call({ max_price: '250' })
+    expect(vi.mocked(findProducts).mock.calls[0]![0].maxPrice).toBe(250)
+  })
+
+  it('drops a sort and an availability it does not recognise', async () => {
+    vi.mocked(findProducts).mockResolvedValue([chair])
+    await call({ sort: 'cheapest', availability: 'maybe' })
+    const filter = vi.mocked(findProducts).mock.calls[0]![0]
+    expect(filter.sort).toBe('relevance')
+    expect(filter.availability).toBeNull()
+  })
+
+  it('puts the price, the tax wording and the stock on every line', async () => {
+    vi.mocked(findProducts).mockResolvedValue([chair])
+    const text = textOf(await call({ query: 'chair' }))
+    expect(text).toContain('GBP 199.00 to GBP 249.00 ex VAT')
+    expect(text).toContain('In stock')
+    expect(text).toContain('https://example.com/task-chair')
+    expect(text).toContain('https://example.com/task-chair.md')
+  })
+
+  it('says which way to loosen the question when nothing matches', async () => {
+    vi.mocked(findProducts).mockResolvedValue([])
+    const text = textOf(await call({ max_price: 5 }))
+    expect(text).toContain('wider price range')
+  })
+
+  it('carries the same figures into an ordinary search hit', async () => {
+    vi.mocked(searchSite).mockResolvedValue([chair])
+    const res = await handleMcpRequest(
+      { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'search_site', arguments: { query: 'chair' } } },
+      ctx,
+    )
+    expect(textOf(res)).toContain('GBP 199.00 to GBP 249.00 ex VAT')
   })
 })

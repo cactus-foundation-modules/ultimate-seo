@@ -11,7 +11,13 @@ import {
   CONTACT_TYPES,
   LOCAL_ORG_TYPES,
   ORG_TYPES,
+  RETURN_FEES,
+  RETURN_METHODS,
+  RETURN_POLICY_CATEGORIES,
   type OrgType,
+  type ReturnFees,
+  type ReturnMethod,
+  type ReturnPolicyCategory,
   type SeoStructuredData,
 } from '@/modules/ultimate-seo/lib/types'
 
@@ -90,6 +96,26 @@ function Card({ title, children }: { title: string; children: React.ReactNode })
 }
 
 const rowStyle: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }
+
+// Schema.org's own words on the left, a shopkeeper's on the right. Nobody has
+// ever described their returns policy as a MerchantReturnFiniteReturnWindow.
+const RETURN_CATEGORY_LABELS: Record<ReturnPolicyCategory, string> = {
+  MerchantReturnFiniteReturnWindow: 'Accepted, within a set number of days',
+  MerchantReturnUnlimitedWindow: 'Accepted, no time limit',
+  MerchantReturnNotPermitted: 'Not accepted',
+}
+
+const RETURN_METHOD_LABELS: Record<ReturnMethod, string> = {
+  ReturnByMail: 'Sent back by post or carrier',
+  ReturnInStore: 'Brought back to the shop',
+  ReturnAtKiosk: 'Dropped at a collection point',
+}
+
+const RETURN_FEES_LABELS: Record<ReturnFees, string> = {
+  FreeReturn: 'Free - we pay',
+  ReturnShippingFees: 'The customer pays return postage',
+  RestockingFees: 'A restocking fee applies',
+}
 
 export default function StructuredDataClient() {
   const [data, setData] = useState<Payload | null>(null)
@@ -358,6 +384,95 @@ export default function StructuredDataClient() {
                 ? `Anywhere that proves you are you - social pages, company registries. Leave blank and the ${data.fallbackSameAs.length} from Settings → SEO are used instead.`
                 : 'Anywhere that proves you are you - social pages, company registries.',
               'https://find-and-update.company-information.service.gov.uk/company/17332661',
+            )}
+          </Card>
+
+          <Card title="Returns">
+            <Field
+              id="sd-returnPolicyCategory"
+              label="Do you accept returns?"
+              help="Published as a returns policy on the organisation record. Assistants asked to recommend a supplier weigh up what happens when something is wrong, and this is the machine-readable answer. Leave it on “Not stated” and nothing goes out."
+            >
+              <select
+                id="sd-returnPolicyCategory"
+                value={form.returnPolicyCategory}
+                onChange={(e) => set({ returnPolicyCategory: e.target.value as ReturnPolicyCategory | '' })}
+                style={inputStyle}
+              >
+                <option value="">Not stated</option>
+                {RETURN_POLICY_CATEGORIES.map((c) => (
+                  <option key={c} value={c}>{RETURN_CATEGORY_LABELS[c]}</option>
+                ))}
+              </select>
+            </Field>
+
+            {form.returnPolicyCategory === 'MerchantReturnFiniteReturnWindow' && (
+              <Field id="sd-returnDays" label="Days to return" help="Counted from delivery.">
+                <input
+                  id="sd-returnDays"
+                  type="number"
+                  min={1}
+                  value={form.returnDays ?? ''}
+                  onChange={(e) => set({ returnDays: e.target.value ? parseInt(e.target.value, 10) : null })}
+                  style={inputStyle}
+                  placeholder="30"
+                />
+              </Field>
+            )}
+
+            {form.returnPolicyCategory && form.returnPolicyCategory !== 'MerchantReturnNotPermitted' && (
+              <>
+                <Field id="sd-returnMethod" label="How does it come back?">
+                  <select
+                    id="sd-returnMethod"
+                    value={form.returnMethod}
+                    onChange={(e) => set({ returnMethod: e.target.value as ReturnMethod | '' })}
+                    style={inputStyle}
+                  >
+                    <option value="">Not stated</option>
+                    {RETURN_METHODS.map((m) => (
+                      <option key={m} value={m}>{RETURN_METHOD_LABELS[m]}</option>
+                    ))}
+                  </select>
+                </Field>
+                <Field id="sd-returnFees" label="Who pays?">
+                  <select
+                    id="sd-returnFees"
+                    value={form.returnFees}
+                    onChange={(e) => set({ returnFees: e.target.value as ReturnFees | '' })}
+                    style={inputStyle}
+                  >
+                    <option value="">Not stated</option>
+                    {RETURN_FEES.map((f) => (
+                      <option key={f} value={f}>{RETURN_FEES_LABELS[f]}</option>
+                    ))}
+                  </select>
+                </Field>
+                {form.returnFees && form.returnFees !== 'FreeReturn' && (
+                  <div style={rowStyle}>
+                    <Field id="sd-returnFeeAmount" label="How much?" help="Both boxes, or neither: a fee with no currency is a warning rather than a figure.">
+                      <input
+                        id="sd-returnFeeAmount"
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={form.returnFeeAmount ?? ''}
+                        onChange={(e) => set({ returnFeeAmount: e.target.value ? parseFloat(e.target.value) : null })}
+                        style={inputStyle}
+                        placeholder="4.99"
+                      />
+                    </Field>
+                    {text('returnFeeCurrency', 'Currency', 'Three letters, e.g. GBP.', 'GBP')}
+                  </div>
+                )}
+              </>
+            )}
+
+            {form.returnPolicyCategory && (
+              <>
+                {text('returnPolicyCountry', 'Where it applies', 'Two-letter country code. Blank uses the country in your address above.', 'GB')}
+                {text('returnPolicyUrl', 'Policy page', 'The page a person can read it on.', '/returns-and-cancellations')}
+              </>
             )}
           </Card>
 

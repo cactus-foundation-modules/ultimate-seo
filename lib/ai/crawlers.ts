@@ -40,6 +40,10 @@ export const AI_CRAWLERS: readonly AiCrawler[] = [
   { key: 'claudebot', token: 'ClaudeBot', label: 'ClaudeBot', vendor: 'Anthropic', purpose: 'train', note: 'Collects pages to train Claude. Sends you nothing back.' },
   { key: 'claude-searchbot', token: 'Claude-SearchBot', label: 'Claude Search', vendor: 'Anthropic', purpose: 'search', note: 'Indexes your pages so Claude can cite and link them.' },
   { key: 'claude-user', token: 'Claude-User', label: 'Claude (live visit)', vendor: 'Anthropic', purpose: 'agent', note: 'Fetches a page because somebody using Claude asked about it just now.' },
+  // The token Anthropic used before the three above it. Still sent by older
+  // clients, and a site that blocked ClaudeBot and not this one was blocking
+  // half of what it thought it was.
+  { key: 'anthropic-ai', token: 'anthropic-ai', label: 'Anthropic (older token)', vendor: 'Anthropic', purpose: 'train', note: 'Anthropic\'s earlier crawler name. Answer it the same way as ClaudeBot.' },
   // Perplexity
   { key: 'perplexitybot', token: 'PerplexityBot', label: 'PerplexityBot', vendor: 'Perplexity', purpose: 'search', note: 'Indexes your pages so Perplexity can cite and link them.' },
   { key: 'perplexity-user', token: 'Perplexity-User', label: 'Perplexity (live visit)', vendor: 'Perplexity', purpose: 'agent', note: 'Fetches a page because somebody in Perplexity asked about it just now.' },
@@ -51,6 +55,10 @@ export const AI_CRAWLERS: readonly AiCrawler[] = [
   // Everybody else
   { key: 'amazonbot', token: 'Amazonbot', label: 'Amazonbot', vendor: 'Amazon', purpose: 'search', note: 'Indexes pages for Alexa and Amazon search results.' },
   { key: 'meta-externalagent', token: 'meta-externalagent', label: 'Meta AI', vendor: 'Meta', purpose: 'train', note: 'Collects pages for Meta AI. Sends you nothing back.' },
+  { key: 'meta-externalfetcher', token: 'meta-externalfetcher', label: 'Meta AI (live visit)', vendor: 'Meta', purpose: 'agent', note: 'Fetches a page because somebody in a Meta app asked about it just now.' },
+  { key: 'facebookbot', token: 'FacebookBot', label: 'Facebook language crawler', vendor: 'Meta', purpose: 'train', note: 'Collects pages to train Meta\'s language models. Not the one that builds link previews.' },
+  { key: 'google-cloudvertexbot', token: 'Google-CloudVertexBot', label: 'Google Vertex agents', vendor: 'Google', purpose: 'agent', note: 'Fetches a page on behalf of somebody\'s own Google-built assistant.' },
+  { key: 'ai2bot', token: 'AI2Bot', label: 'AI2', vendor: 'Allen Institute', purpose: 'train', note: 'Collects pages for an open research dataset. Sends you nothing back.' },
   { key: 'bytespider', token: 'Bytespider', label: 'Bytespider', vendor: 'ByteDance', purpose: 'train', note: 'Collects pages for ByteDance. Known for crawling hard and often.' },
   { key: 'ccbot', token: 'CCBot', label: 'Common Crawl', vendor: 'Common Crawl', purpose: 'train', note: 'A public archive that most model builders train from. Blocking it blocks many at once.' },
   { key: 'mistralai-user', token: 'MistralAI-User', label: 'Mistral (live visit)', vendor: 'Mistral', purpose: 'agent', note: 'Fetches a page because somebody using Mistral asked about it just now.' },
@@ -60,6 +68,7 @@ export const AI_CRAWLERS: readonly AiCrawler[] = [
   { key: 'imagesiftbot', token: 'ImagesiftBot', label: 'ImageSift', vendor: 'ImageSift', purpose: 'train', note: 'Collects images from your pages for a searchable image dataset.' },
   { key: 'youbot', token: 'YouBot', label: 'YouBot', vendor: 'You.com', purpose: 'search', note: 'Indexes your pages so You.com can cite and link them.' },
   { key: 'duckassistbot', token: 'DuckAssistBot', label: 'DuckAssist', vendor: 'DuckDuckGo', purpose: 'search', note: 'Indexes your pages for DuckDuckGo’s assistant answers.' },
+  { key: 'firecrawl', token: 'FirecrawlAgent', label: 'Firecrawl', vendor: 'Firecrawl', purpose: 'agent', note: 'Fetches pages on behalf of whoever is paying it. Often somebody building their own assistant.' },
 ] as const
 
 export const AI_CRAWLER_KEYS: ReadonlySet<string> = new Set(AI_CRAWLERS.map((c) => c.key))
@@ -88,15 +97,19 @@ export function identifyAiCrawler(userAgent: string | null | undefined): string 
 // from a page ABOUT ChatGPT is not counted as a visit FROM ChatGPT.
 const REFERRERS: ReadonlyArray<{ key: string; label: string; hosts: readonly string[] }> = [
   { key: 'chatgpt', label: 'ChatGPT', hosts: ['chatgpt.com', 'chat.openai.com'] },
-  { key: 'claude', label: 'Claude', hosts: ['claude.ai'] },
+  // Both domains: Anthropic added claude.com alongside claude.ai, and a site
+  // counting only the older one reads its own referrals as falling away.
+  { key: 'claude', label: 'Claude', hosts: ['claude.ai', 'claude.com'] },
   { key: 'perplexity', label: 'Perplexity', hosts: ['perplexity.ai', 'www.perplexity.ai'] },
   { key: 'gemini', label: 'Gemini', hosts: ['gemini.google.com', 'bard.google.com'] },
-  { key: 'copilot', label: 'Microsoft Copilot', hosts: ['copilot.microsoft.com'] },
+  { key: 'copilot', label: 'Microsoft Copilot', hosts: ['copilot.microsoft.com', 'edgeservices.bing.com'] },
   { key: 'meta-ai', label: 'Meta AI', hosts: ['meta.ai', 'www.meta.ai'] },
   { key: 'grok', label: 'Grok', hosts: ['grok.com', 'x.ai'] },
   { key: 'mistral', label: 'Le Chat', hosts: ['chat.mistral.ai'] },
   { key: 'you', label: 'You.com', hosts: ['you.com'] },
   { key: 'poe', label: 'Poe', hosts: ['poe.com'] },
+  { key: 'phind', label: 'Phind', hosts: ['phind.com'] },
+  { key: 'brave-leo', label: 'Brave Leo', hosts: ['search.brave.com'] },
 ]
 
 export const AI_REFERRER_LABELS: Readonly<Record<string, string>> = Object.fromEntries(

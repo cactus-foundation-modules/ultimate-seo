@@ -109,6 +109,60 @@ function buildContactPoint(sd: SeoStructuredData): Record<string, unknown> | nul
 }
 
 /**
+ * The return policy, as a MerchantReturnPolicy hung off the organisation.
+ *
+ * Null when the owner has not said, which is not the same as "no returns" -
+ * schema.org has a category for that and it is not this function's to assume.
+ *
+ * Why on the Organization rather than on each offer: it is one policy, the shop
+ * already publishes its own Product blocks, and a policy restated on twenty
+ * thousand offers is twenty thousand places for it to fall out of step with the
+ * page a customer actually reads.
+ */
+export function buildReturnPolicyJsonLd(
+  sd: SeoStructuredData,
+  ctx: StructuredDataContext
+): Record<string, unknown> | null {
+  if (!sd.returnPolicyCategory) return null
+
+  const country = sd.returnPolicyCountry.trim() || sd.addressCountry.trim()
+  const data: Record<string, unknown> = {
+    '@type': 'MerchantReturnPolicy',
+    returnPolicyCategory: `https://schema.org/${sd.returnPolicyCategory}`,
+  }
+  if (country) data.applicableCountry = country
+
+  // Only meaningful on a finite window. On "unlimited" or "not permitted" it is
+  // a contradiction, and a validator reads a contradiction as a reason to
+  // ignore the whole block rather than the half that disagreed.
+  if (sd.returnPolicyCategory === 'MerchantReturnFiniteReturnWindow' && sd.returnDays !== null) {
+    data.merchantReturnDays = sd.returnDays
+  }
+
+  if (sd.returnPolicyCategory !== 'MerchantReturnNotPermitted') {
+    if (sd.returnMethod) data.returnMethod = `https://schema.org/${sd.returnMethod}`
+    if (sd.returnFees) {
+      data.returnFees = `https://schema.org/${sd.returnFees}`
+      // A fee with no figure is a warning to the buyer and a warning in every
+      // validator. Published only when both halves are there.
+      const currency = sd.returnFeeCurrency.trim().toUpperCase()
+      if (sd.returnFees !== 'FreeReturn' && sd.returnFeeAmount !== null && currency) {
+        data.returnShippingFeesAmount = {
+          '@type': 'MonetaryAmount',
+          value: sd.returnFeeAmount,
+          currency,
+        }
+      }
+    }
+  }
+
+  const url = sd.returnPolicyUrl.trim() ? absoluteUrl(ctx.siteUrl, sd.returnPolicyUrl) : null
+  if (url) data.merchantReturnLink = url
+
+  return data
+}
+
+/**
  * The Organization (or LocalBusiness family) record. Returns null when there is
  * not enough to say - a nameless organisation is not markup, it is noise, and
  * markup that says nothing is scored accordingly.
@@ -170,6 +224,8 @@ export function buildOrganizationJsonLd(
   }
   if (address) data.address = address
   if (areaServed) data.areaServed = areaServed
+  const returnPolicy = buildReturnPolicyJsonLd(sd, ctx)
+  if (returnPolicy) data.hasMerchantReturnPolicy = returnPolicy
   if (contactPoint) data.contactPoint = contactPoint
   if (sameAs.length) data.sameAs = sameAs
 

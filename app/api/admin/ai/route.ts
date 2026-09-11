@@ -36,6 +36,7 @@ const Body = z.object({
   pageMarkdownLink: z.boolean(),
   analytics: z.boolean(),
   analyticsRetentionDays: z.number().int().min(7).max(730),
+  publishSupplier: z.boolean(),
   mcp: z.boolean(),
   mcpMaxResults: z.number().int().min(1).max(100),
   crawlerPolicy: z.record(z.string(), z.enum(['allow', 'block'])),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { businessFacts, businessFactsSection, businessFactsText } from './business-facts'
+import { businessFacts, businessFactsSection, businessFactsText, returnsLine } from './business-facts'
 import { DEFAULT_STRUCTURED_DATA, type SeoStructuredData } from '../types'
 
 const profile = (over: Partial<SeoStructuredData> = {}): SeoStructuredData => ({
@@ -93,5 +93,47 @@ describe('businessFactsText', () => {
 
   it('is null when the profile is empty', () => {
     expect(businessFactsText(profile(), '')).toBeNull()
+  })
+})
+
+describe('returnsLine', () => {
+  it('says nothing at all when the owner has not stated a policy', () => {
+    expect(returnsLine(profile())).toBe('')
+    expect(businessFacts(filled, '').some((f) => f.label === 'Returns')).toBe(false)
+  })
+
+  it('reads as a sentence, not as schema.org', () => {
+    const line = returnsLine(profile({
+      returnPolicyCategory: 'MerchantReturnFiniteReturnWindow',
+      returnDays: 30,
+      returnMethod: 'ReturnByMail',
+      returnFees: 'FreeReturn',
+    }))
+    expect(line).toBe('Within 30 days, by post, free of charge')
+  })
+
+  it('names the fee when the buyer is paying it', () => {
+    const line = returnsLine(profile({
+      returnPolicyCategory: 'MerchantReturnFiniteReturnWindow',
+      returnDays: 14,
+      returnFees: 'ReturnShippingFees',
+      returnFeeAmount: 4.99,
+      returnFeeCurrency: 'GBP',
+    }))
+    expect(line).toContain('return postage GBP 4.99, paid by the buyer')
+  })
+
+  it('says so plainly when returns are not accepted', () => {
+    expect(returnsLine(profile({ returnPolicyCategory: 'MerchantReturnNotPermitted' }))).toBe('Not accepted')
+  })
+
+  it('reaches llms.txt and the agent endpoint through the same fact', () => {
+    const sd = profile({
+      ...filled,
+      returnPolicyCategory: 'MerchantReturnUnlimitedWindow',
+      returnFees: 'FreeReturn',
+    })
+    expect(businessFactsSection(sd, '')).toContain('**Returns**: Any time, free of charge')
+    expect(businessFactsText(sd, '')).toContain('Returns: Any time, free of charge')
   })
 })

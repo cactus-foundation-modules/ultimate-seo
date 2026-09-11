@@ -60,6 +60,20 @@ export function stringParam(params: Record<string, unknown> | undefined, name: s
   return typeof value === 'string' ? value.trim() : ''
 }
 
+/**
+ * An optional money figure: absent, or a number a caller meant.
+ *
+ * Deliberately not numberParam with a fallback. A budget that silently became
+ * "no budget" because the caller sent it as a string is an answer full of things
+ * the person cannot afford, and they blame the shop rather than the plumbing.
+ */
+export function optionalNumberParam(params: Record<string, unknown> | undefined, name: string): number | null {
+  const value = params?.[name]
+  if (value === undefined || value === null || value === '') return null
+  const n = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(n) && n >= 0 ? n : null
+}
+
 export function numberParam(params: Record<string, unknown> | undefined, name: string, fallback: number, max: number): number {
   const value = params?.[name]
   const n = typeof value === 'number' ? value : Number(value)

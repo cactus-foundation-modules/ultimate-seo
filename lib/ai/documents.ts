@@ -16,7 +16,7 @@ import { htmlToMarkdown, looksLikeHtml } from './html-to-markdown'
 import { puckToMarkdown } from './puck-markdown'
 import { bulletList, link, oneLine, renderDocument, table, type DocumentSection } from './document-format'
 import type { BreadcrumbStep, PageFacts } from './json-ld'
-import type { EntityType, InventoryItem } from '../types'
+import type { DocumentFacets, EntityType, InventoryItem, ProductAvailability, ProductFacets } from '../types'
 
 export type BuiltDocument = {
   entityType: EntityType
@@ -29,6 +29,8 @@ export type BuiltDocument = {
   sourceUpdatedAt: Date | null
   /** What this page's structured data and its twin link are built from at serve time. */
   pageFacts: PageFacts
+  /** Price, stock and shelf, for the agent endpoint to filter on. Null off a product. */
+  facets: DocumentFacets | null
 }
 
 /** How each content type is described to a reader that has never seen the site. */
@@ -66,30 +68,135 @@ function decimalToNumber(value: unknown): number | null {
   return Number.isFinite(n) ? n : null
 }
 
-function moneyFormatter(currency: string): (value: unknown) => string {
+/**
+ * Prices as the SHOP PRINTS THEM, which is not always what the shop stores.
+ *
+ * `taxMode` says what the figures in the product editor mean; `priceDisplayTax`
+ * says what the storefront shows. A shop keeping its prices net for a trade
+ * catalogue and showing them gross to consumers stores one figure and displays
+ * another, and a twin that published the stored one would have every assistant
+ * on the internet quoting a price 20% below the page - which is worse than
+ * quoting nothing, because the shopper only finds out at the basket.
+ *
+ * The rate comes from the shop's default zone, which is the same answer its own
+ * catalogue pages give: a price has to be printed long before anybody knows
+ * where the parcel is going.
+ */
+type PriceView = {
+  currency: string
+  /** The shop's own wording after a price, e.g. "ex VAT". Empty when it has none. */
+  suffix: string
+  /** A stored figure as the storefront prints it, or null when there is none. */
+  amount(value: unknown, taxClassId: string | null): number | null
+  /** That figure, formatted, with the wording on the end. */
+  format(value: unknown, taxClassId: string | null): string
+}
+
+function round2(n: number): number {
+  return Math.round((n + Number.EPSILON) * 100) / 100
+}
+
+type ShopPriceConfig = {
+  currency: string
+  mode: 'AS_ENTERED' | 'INCLUSIVE' | 'EXCLUSIVE'
+  storedIncludesTax: boolean
+  suffix: string
+  /** Rate per tax-class id in the default zone. Absent means zero-rated. */
+  rates: Map<string, number>
+}
+
+const NO_PRICE_ADJUSTMENT: ShopPriceConfig = {
+  currency: 'GBP', mode: 'AS_ENTERED', storedIncludesTax: true, suffix: '', rates: new Map(),
+}
+
+async function shopPriceConfig(): Promise<ShopPriceConfig> {
+  let config = NO_PRICE_ADJUSTMENT
+  try {
+    const rows = await prisma.$queryRaw<Array<{ currency: string | null; mode: string | null; tax_mode: string | null; suffix: string | null }>>`
+      SELECT "config" ->> 'currency'              AS currency,
+             "config" ->> 'priceDisplayTax'       AS mode,
+             "config" ->> 'taxMode'               AS tax_mode,
+             "config" ->> 'priceDisplayTaxSuffix' AS suffix
+      FROM "shp_settings" WHERE "id" = 'singleton' LIMIT 1
+    `
+    const row = rows[0]
+    if (!row) return config
+    const code = row.currency?.trim().toUpperCase()
+    config = {
+      currency: code && /^[A-Z]{3}$/.test(code) ? code : 'GBP',
+      mode: row.mode === 'INCLUSIVE' || row.mode === 'EXCLUSIVE' ? row.mode : 'AS_ENTERED',
+      // The shop's own default. A column that has never been written means a
+      // shop that has never thought about it, and that shop's prices carry tax.
+      storedIncludesTax: row.tax_mode !== 'EXCLUSIVE',
+      suffix: row.suffix?.trim() ?? '',
+      rates: new Map(),
+    }
+  } catch {
+    // No shop installed, or a version of it without these keys. Print what is
+    // stored and say nothing about tax, which is what this did before.
+    return NO_PRICE_ADJUSTMENT
+  }
+
+  // Nothing to convert: skip the zone and rate queries entirely rather than
+  // reading a rate table per rebuild for a multiply by one.
+  if (config.mode === 'AS_ENTERED') return config
+
+  try {
+    // The default zone is the one with no postcodes listed - the catch-all -
+    // else the first by name. Same rule the shop's own resolver follows.
+    const zones = await prisma.$queryRaw<Array<{ id: string; postcodes: unknown }>>`
+      SELECT "id", "postcodes" FROM "shp_shipping_zones" ORDER BY "name" ASC
+    `
+    const zone = zones.find((z) => Array.isArray(z.postcodes) && z.postcodes.length === 0) ?? zones[0]
+    if (!zone) return config
+    const rates = await prisma.$queryRaw<Array<{ tax_class_id: string; rate: unknown }>>`
+      SELECT "tax_class_id", "rate" FROM "shp_tax_zone_rates" WHERE "zone_id" = ${zone.id}
+    `
+    for (const rate of rates) {
+      const value = decimalToNumber(rate.rate)
+      if (value !== null) config.rates.set(rate.tax_class_id, value)
+    }
+  } catch {
+    // Rates unreadable: the suffix and the currency are still right, and the
+    // figures are the stored ones, which is where this started.
+  }
+  return config
+}
+
+function priceView(config: ShopPriceConfig): PriceView {
   let format: Intl.NumberFormat
   try {
-    format = new Intl.NumberFormat('en-GB', { style: 'currency', currency })
+    format = new Intl.NumberFormat('en-GB', { style: 'currency', currency: config.currency })
   } catch {
     // An unrecognised currency code would throw here and take the whole rebuild
     // with it. Falling back to plain numbers loses the symbol and nothing else.
     format = new Intl.NumberFormat('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   }
-  return (value: unknown) => {
-    const n = decimalToNumber(value)
-    return n === null ? '' : format.format(n)
-  }
-}
 
-async function shopCurrency(): Promise<string> {
-  try {
-    const rows = await prisma.$queryRaw<Array<{ currency: string | null }>>`
-      SELECT "config" ->> 'currency' AS currency FROM "shp_settings" WHERE "id" = 'singleton' LIMIT 1
-    `
-    const code = rows[0]?.currency?.trim().toUpperCase()
-    return code && /^[A-Z]{3}$/.test(code) ? code : 'GBP'
-  } catch {
-    return 'GBP'
+  const wantsTax = config.mode === 'AS_ENTERED' ? config.storedIncludesTax : config.mode === 'INCLUSIVE'
+  const factor = (taxClassId: string | null): number => {
+    if (wantsTax === config.storedIncludesTax) return 1
+    const rate = (taxClassId ? config.rates.get(taxClassId) : 0) ?? 0
+    if (rate <= 0) return 1
+    return wantsTax ? 1 + rate : 1 / (1 + rate)
+  }
+
+  const amount = (value: unknown, taxClassId: string | null): number | null => {
+    const n = decimalToNumber(value)
+    if (n === null) return null
+    const f = factor(taxClassId)
+    return f === 1 ? n : round2(n * f)
+  }
+
+  return {
+    currency: config.currency,
+    suffix: config.suffix,
+    amount,
+    format(value, taxClassId) {
+      const n = amount(value, taxClassId)
+      if (n === null) return ''
+      return config.suffix ? `${format.format(n)} ${config.suffix}` : format.format(n)
+    },
   }
 }
 
@@ -256,6 +363,7 @@ type ProductRow = {
   dimension_h: unknown
   dimension_unit: string | null
   supplier: string | null
+  tax_class_id: string | null
 }
 
 type ProductExtras = {
@@ -386,7 +494,7 @@ const MAX_VARIANTS_LISTED = 50
 function productSections(
   product: ProductRow,
   extras: ProductExtras,
-  money: (v: unknown) => string,
+  money: PriceView,
 ): DocumentSection[] {
   const sections: DocumentSection[] = []
 
@@ -398,7 +506,9 @@ function productSections(
     const rows = variants.slice(0, MAX_VARIANTS_LISTED).map((v) => [
       v.options?.trim() || v.name,
       v.sku ?? '',
-      money(effectivePrice(v)),
+      // The listing's tax class, not the child's: a combination is the same
+      // goods in a different colour, and the shop charges it accordingly.
+      money.format(effectivePrice(v), product.tax_class_id),
       v.track_inventory ? String(v.stock_count ?? 0) : 'Made to order',
       extras.modelled.has(v.child_id) ? 'Yes' : 'No',
     ])
@@ -463,7 +573,8 @@ function effectivePrice(row: { price: unknown; sale_price: unknown }): number | 
 function productFacts(
   product: ProductRow,
   extras: ProductExtras,
-  money: (v: unknown) => string,
+  money: PriceView,
+  publishSupplier: boolean,
 ): Array<{ label: string; value: string }> {
   const facts: Array<{ label: string; value: string }> = []
   const variants = extras.variants.get(product.id) ?? []
@@ -479,8 +590,8 @@ function productFacts(
     facts.push({
       label: 'Price',
       value: sale !== null && sale > 0 && listPrice !== null && listPrice > sale
-        ? `${money(sale)} (was ${money(listPrice)})`
-        : money(own),
+        ? `${money.format(sale, product.tax_class_id)} (was ${money.format(listPrice, product.tax_class_id)})`
+        : money.format(own, product.tax_class_id),
     })
   } else {
     const prices = variants.map(effectivePrice).filter((n): n is number => n !== null)
@@ -489,7 +600,9 @@ function productFacts(
       const high = Math.max(...prices)
       facts.push({
         label: 'Price',
-        value: low === high ? money(low) : `${money(low)} to ${money(high)}, by choice`,
+        value: low === high
+          ? money.format(low, product.tax_class_id)
+          : `${money.format(low, product.tax_class_id)} to ${money.format(high, product.tax_class_id)}, by choice`,
       })
     }
   }
@@ -543,9 +656,73 @@ function productFacts(
 
   const photos = extras.photoCounts.get(product.id) ?? 0
   if (photos > 0) facts.push({ label: 'Photographs', value: String(photos) })
-  if (product.supplier) facts.push({ label: 'Supplier', value: product.supplier })
+  if (publishSupplier && product.supplier) facts.push({ label: 'Supplier', value: product.supplier })
 
   return facts
+}
+
+/**
+ * The same product, as values rather than as prose.
+ *
+ * Written from the same rows the prose is, in the same pass, so the two cannot
+ * disagree: a price that appears in one and not the other is the kind of thing
+ * that is only noticed when an assistant quotes the wrong one.
+ */
+function productFacets(product: ProductRow, extras: ProductExtras, money: PriceView): ProductFacets {
+  const variants = extras.variants.get(product.id) ?? []
+  const taxClass = product.tax_class_id
+
+  // The listing's own price when it has one, else the spread across whatever a
+  // buyer can actually choose - which for most catalogues is where the money is.
+  const own = effectivePrice(product)
+  const prices = own !== null
+    ? [own]
+    : variants.map(effectivePrice).filter((n): n is number => n !== null)
+  const shown = prices
+    .map((p) => money.amount(p, taxClass))
+    .filter((n): n is number => n !== null)
+
+  return {
+    kind: 'product',
+    currency: money.currency,
+    priceMin: shown.length ? Math.min(...shown) : null,
+    priceMax: shown.length ? Math.max(...shown) : null,
+    priceSuffix: money.suffix,
+    availability: productAvailability(product, variants),
+    sku: product.sku,
+    groups: productGroups(product, extras),
+  }
+}
+
+/** Whether somebody can have this, in one word, on the same rules as the prose. */
+function productAvailability(product: ProductRow, variants: VariantRow[]): ProductAvailability {
+  if (product.is_pre_order) return 'pre-order'
+  if (variants.length > 0) {
+    const stock = variants.reduce((n, v) => n + (v.track_inventory ? (v.stock_count ?? 0) : 0), 0)
+    if (stock > 0) return 'in-stock'
+    return variants.some((v) => !v.track_inventory) ? 'made-to-order' : 'out-of-stock'
+  }
+  if (!product.track_inventory) return 'made-to-order'
+  if ((product.stock_count ?? 0) > 0) return 'in-stock'
+  return product.out_of_stock_behaviour === 'BACKORDER' ? 'backorder' : 'out-of-stock'
+}
+
+/**
+ * Every shelf this sits on, as words somebody might actually use.
+ *
+ * Names AND slugs, lowercased: an agent narrowing a catalogue has read a page,
+ * so it knows "office chairs"; it has not read the database, so it does not know
+ * that the slug is `office-seating`. Matching either costs one array.
+ */
+function productGroups(product: ProductRow, extras: ProductExtras): string[] {
+  const out = new Set<string>()
+  for (const group of [...(extras.categories.get(product.id) ?? []), ...(extras.collections.get(product.id) ?? [])]) {
+    const name = group.name.trim().toLowerCase()
+    const slug = group.slug.trim().toLowerCase()
+    if (name) out.add(name)
+    if (slug) out.add(slug)
+  }
+  return [...out]
 }
 
 // ---------------------------------------------------------------------------
@@ -575,7 +752,7 @@ async function taxonomyProducts(
   ids: string[],
   atRoot: boolean,
   hasVariations: boolean,
-): Promise<Map<string, Array<{ name: string; path: string; price: unknown }>>> {
+): Promise<Map<string, Array<{ name: string; path: string; price: unknown; taxClassId: string | null }>>> {
   // The listed price, falling back to the cheapest of a listing's combinations
   // when the parent row carries none - see productFacts for why that is the
   // normal case. Only asked when shop-variations is installed: on a site
@@ -590,9 +767,9 @@ async function taxonomyProducts(
   // Capped per taxonomy row for the same reason variations are: a category with
   // eight hundred products in it is an index, not a document, and the sitemap
   // already lists every one of them.
-  const rows = await prisma.$queryRaw<Array<{ owner_id: string; name: string; slug: string; price: unknown; rank: bigint }>>`
-    SELECT owner_id, name, slug, price, rank FROM (
-      SELECT j.${Prisma.raw(`"${column}"`)} AS owner_id, p."name", p."slug", ${priceExpr} AS price,
+  const rows = await prisma.$queryRaw<Array<{ owner_id: string; name: string; slug: string; price: unknown; tax_class_id: string | null; rank: bigint }>>`
+    SELECT owner_id, name, slug, price, tax_class_id, rank FROM (
+      SELECT j.${Prisma.raw(`"${column}"`)} AS owner_id, p."name", p."slug", ${priceExpr} AS price, p."tax_class_id",
              ROW_NUMBER() OVER (PARTITION BY j.${Prisma.raw(`"${column}"`)} ORDER BY p."popularity" DESC NULLS LAST, p."name" ASC) AS rank
       FROM ${Prisma.raw(`"${join}"`)} j
       JOIN "shp_products" p ON p."id" = j."product_id"
@@ -602,12 +779,13 @@ async function taxonomyProducts(
     WHERE rank <= 100
   `
   const byOwner = groupBy(rows, (r) => r.owner_id)
-  const out = new Map<string, Array<{ name: string; path: string; price: unknown }>>()
+  const out = new Map<string, Array<{ name: string; path: string; price: unknown; taxClassId: string | null }>>()
   for (const [ownerId, products] of byOwner) {
     out.set(ownerId, products.map((p) => ({
       name: p.name,
       path: atRoot ? p.slug : `shop/products/${p.slug}`,
       price: p.price,
+      taxClassId: p.tax_class_id,
     })))
   }
   return out
@@ -615,13 +793,13 @@ async function taxonomyProducts(
 
 /** The same products, as the table that goes in the Markdown twin. */
 function productTable(
-  products: Array<{ name: string; path: string; price: unknown }> | undefined,
-  money: (v: unknown) => string,
+  products: Array<{ name: string; path: string; price: unknown; taxClassId: string | null }> | undefined,
+  money: PriceView,
 ): string {
   if (!products || products.length === 0) return ''
   return table(['Product', 'Price'], products.map((p) => [
     link(p.name, `/${p.path}`),
-    money(p.price) || 'On request',
+    money.format(p.price, p.taxClassId) || 'On request',
   ]))
 }
 
@@ -671,6 +849,8 @@ export type BuildContext = {
   productsAtRoot: boolean
   /** Whether the gazette serves its posts off the site root. */
   postsAtRoot: boolean
+  /** Whether a product's twin may name the supplier behind it. */
+  publishSupplier: boolean
 }
 
 /**
@@ -684,7 +864,7 @@ export async function buildDocuments(items: InventoryItem[], ctx: BuildContext):
   if (items.length === 0) return []
 
   const byType = groupBy(items, (i) => i.entityType)
-  const money = moneyFormatter(await shopCurrency())
+  const money = priceView(await shopPriceConfig())
   const out: BuiltDocument[] = []
 
   const compose = (
@@ -692,6 +872,7 @@ export async function buildDocuments(items: InventoryItem[], ctx: BuildContext):
     sections: DocumentSection[],
     facts?: Array<{ label: string; value: string }>,
     page?: Partial<PageFacts>,
+    facets: DocumentFacets | null = null,
   ) => {
     const abstract = ctx.abstracts.get(`${item.entityType}:${item.entityId}`) ?? null
     const summary = oneLine(abstract) ?? oneLine(item.metaDescription)
@@ -722,6 +903,7 @@ export async function buildDocuments(items: InventoryItem[], ctx: BuildContext):
         updatedAt: item.updatedAt,
         ...page,
       },
+      facets,
     })
   }
 
@@ -761,7 +943,7 @@ export async function buildDocuments(items: InventoryItem[], ctx: BuildContext):
         SELECT "id", "master_category_id", "sku", "supplier_sku", "barcode", "price", "sale_price", "track_inventory",
                "stock_count", "out_of_stock_behaviour", "is_pre_order", "min_order_quantity",
                "short_description", "description", "description_puck", "weight", "weight_unit",
-               "dimension_l", "dimension_w", "dimension_h", "dimension_unit", "supplier"
+               "dimension_l", "dimension_w", "dimension_h", "dimension_unit", "supplier", "tax_class_id"
         FROM "shp_products" WHERE "id" IN (${Prisma.join(ids)})
       `,
       loadProductExtras(ids, ctx.hasModule),
@@ -776,9 +958,13 @@ export async function buildDocuments(items: InventoryItem[], ctx: BuildContext):
       // uses for its own heading.
       const categoryId = product.master_category_id ?? extras.categories.get(product.id)?.[0]?.id ?? null
       const trail = categoryId ? categoryTrail(categoryId, tree) : [HOME]
-      compose(item, productSections(product, extras, money), productFacts(product, extras, money), {
-        breadcrumb: [...trail, { name: item.title, path: pathOf(item.url) }],
-      })
+      compose(
+        item,
+        productSections(product, extras, money),
+        productFacts(product, extras, money, ctx.publishSupplier),
+        { breadcrumb: [...trail, { name: item.title, path: pathOf(item.url) }] },
+        productFacets(product, extras, money),
+      )
     }
   }
 

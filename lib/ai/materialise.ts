@@ -106,6 +106,7 @@ export async function rebuildLlmDocuments(options?: { types?: EntityType[]; forc
     abstracts,
     productsAtRoot,
     postsAtRoot,
+    publishSupplier: settings.publishSupplier,
   }
 
   let built = 0
@@ -171,6 +172,7 @@ export async function rebuildOneDocument(entityType: EntityType, entityId: strin
     abstracts,
     productsAtRoot,
     postsAtRoot,
+    publishSupplier: settings.publishSupplier,
   })
   const result = await upsertDocuments(docs)
   return result.written > 0

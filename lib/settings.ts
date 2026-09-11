@@ -7,6 +7,9 @@ import {
   DEFAULT_TARGETS,
   ENTITY_TYPES,
   isOrgType,
+  isReturnFees,
+  isReturnMethod,
+  isReturnPolicyCategory,
   type ContentSignal,
   type CrawlerStance,
   type EntityType,
@@ -43,6 +46,16 @@ function strList(v: unknown, max: number): string[] {
 
 function numOrNull(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.round(v) : null
+}
+
+/**
+ * Money, which unlike every other number on this screen is allowed to be zero
+ * and is not allowed to be rounded to the pound. A free return is a real answer
+ * and £4.99 is a real fee.
+ */
+function moneyOrNull(v: unknown): number | null {
+  if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) return null
+  return Math.round(v * 100) / 100
 }
 
 export function normaliseTargets(raw: Record<string, unknown> | null): SeoTargets {
@@ -119,6 +132,14 @@ export function normaliseStructuredData(raw: Record<string, unknown> | null): Se
     contactTelephone: str(raw?.contactTelephone),
     contactAreaServed: strList(raw?.contactAreaServed, 30),
     contactAvailableLanguage: strList(raw?.contactAvailableLanguage, 20),
+    returnPolicyCategory: isReturnPolicyCategory(raw?.returnPolicyCategory) ? raw.returnPolicyCategory : '',
+    returnDays: numOrNull(raw?.returnDays),
+    returnMethod: isReturnMethod(raw?.returnMethod) ? raw.returnMethod : '',
+    returnFees: isReturnFees(raw?.returnFees) ? raw.returnFees : '',
+    returnFeeAmount: moneyOrNull(raw?.returnFeeAmount),
+    returnFeeCurrency: str(raw?.returnFeeCurrency).trim().toUpperCase().slice(0, 3),
+    returnPolicyCountry: str(raw?.returnPolicyCountry),
+    returnPolicyUrl: str(raw?.returnPolicyUrl),
     emitOrganization: bool(raw?.emitOrganization, d.emitOrganization),
     emitWebSite: bool(raw?.emitWebSite, d.emitWebSite),
     emitSearchAction: bool(raw?.emitSearchAction, d.emitSearchAction),
@@ -226,6 +247,7 @@ export function normaliseAiSettings(raw: Record<string, unknown> | null): SeoAiS
     pageMarkdownLink: bool(raw?.pageMarkdownLink, d.pageMarkdownLink),
     analytics: bool(raw?.analytics, d.analytics),
     analyticsRetentionDays: Math.min(730, Math.max(7, num(raw?.analyticsRetentionDays, d.analyticsRetentionDays))),
+    publishSupplier: bool(raw?.publishSupplier, d.publishSupplier),
     mcp: bool(raw?.mcp, d.mcp),
     mcpMaxResults: Math.min(100, Math.max(1, num(raw?.mcpMaxResults, d.mcpMaxResults))),
     crawlerPolicy: crawlerPolicy(raw?.crawlerPolicy),

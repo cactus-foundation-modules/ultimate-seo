@@ -109,12 +109,13 @@ export async function upsertDocuments(docs: BuiltDocument[]): Promise<{ written:
   const values = docs.map((d) => Prisma.sql`(
     ${d.entityType}, ${d.entityId}, ${d.path}, ${d.title}, ${d.summary},
     ${d.markdown}, ${Buffer.byteLength(d.markdown, 'utf8')}, ${d.sourceUpdatedAt},
-    ${JSON.stringify(d.pageFacts)}::jsonb, CURRENT_TIMESTAMP
+    ${JSON.stringify(d.pageFacts)}::jsonb,
+    ${d.facets ? JSON.stringify(d.facets) : null}::jsonb, CURRENT_TIMESTAMP
   )`)
 
   const statement = (rows: Prisma.Sql[]) => prisma.$executeRaw`
     INSERT INTO "seo_llm_documents"
-      ("entity_type", "entity_id", "path", "title", "summary", "markdown", "byte_size", "source_updated_at", "page_facts", "built_at")
+      ("entity_type", "entity_id", "path", "title", "summary", "markdown", "byte_size", "source_updated_at", "page_facts", "facets", "built_at")
     VALUES ${Prisma.join(rows, ', ')}
     ON CONFLICT ("entity_type", "entity_id") DO UPDATE SET
       "path" = EXCLUDED."path",
@@ -124,6 +125,7 @@ export async function upsertDocuments(docs: BuiltDocument[]): Promise<{ written:
       "byte_size" = EXCLUDED."byte_size",
       "source_updated_at" = EXCLUDED."source_updated_at",
       "page_facts" = EXCLUDED."page_facts",
+      "facets" = EXCLUDED."facets",
       "built_at" = CURRENT_TIMESTAMP
   `
 
