@@ -38,7 +38,12 @@ export const ENTITY_KIND_LABEL: Record<EntityType, string> = {
   'shop-product': 'Product',
   'shop-category': 'Product category',
   'shop-collection': 'Product collection',
-  'filter-collection': 'Product collection',
+  // Not 'Product collection' as well. These labels are what an agent is handed
+  // by list_sections and beside every search hit, and two different kinds of
+  // thing under one name reads as the same section counted twice - which is
+  // exactly how it looked on a live site: "Product collection: 168" directly
+  // above "Product collection: 39".
+  'filter-collection': 'Curated collection',
   'directory-entry': 'Directory listing',
 }
 

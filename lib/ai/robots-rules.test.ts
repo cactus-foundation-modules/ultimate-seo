@@ -44,6 +44,17 @@ describe('robotsExtraLines', () => {
     expect(robotsExtraLines(base({ llmsTxt: false }), 'https://example.com')).toEqual([])
   })
 
+  it('announces the agent endpoint once it is switched on', () => {
+    expect(robotsExtraLines(base({ mcp: true }), 'https://example.com')).toEqual([
+      '# Markdown copies of this site: https://example.com/llms.txt',
+      '# Agent endpoint (MCP, read-only, JSON-RPC over POST): https://example.com/api/m/ultimate-seo/mcp',
+    ])
+  })
+
+  it('says nothing about the agent endpoint while it is off', () => {
+    expect(robotsExtraLines(base(), 'https://example.com').join('\n')).not.toContain('mcp')
+  })
+
   it('carries the content signal above the pointer', () => {
     const lines = robotsExtraLines(base({ contentSignals: { search: 'yes', aiInput: 'yes', aiTrain: 'no' } }), 'https://example.com')
     expect(lines[0]).toBe('Content-Signal: search=yes, ai-input=yes, ai-train=no')

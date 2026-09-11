@@ -76,6 +76,14 @@ export default function DashboardClient({ adminPath }: { adminPath: string }) {
           carry a logo and your contact details instead of being a plain blue link.
         </div>
       )}
+      {data.structuredData.organization && !data.structuredData.webSite && (
+        <div className="alert alert-info" style={{ marginBottom: '1rem' }}>
+          You have told search engines who you are, but not that this site is <em>yours</em>.{' '}
+          <Link href={`${base}/m/ultimate-seo/structured-data`}>Switch the website record on</Link> and the two become
+          one connected record rather than two unrelated claims - which is also what an AI assistant reads before it
+          decides whether to name you.
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '0.75rem', marginBottom: '1.5rem' }}>
         <StatCard label="Average SEO score" value={t.avgScore === null ? '—' : `${t.avgScore}/100`} tone={t.avgScore === null ? undefined : t.avgScore >= 80 ? 'good' : t.avgScore >= 50 ? 'warn' : 'bad'} />

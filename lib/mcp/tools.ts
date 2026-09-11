@@ -64,31 +64,112 @@ export function toolDefinitions(maxResults: number): ToolDefinition[] {
 
 export type SearchHit = { path: string; title: string; summary: string | null; kind: string }
 
+// Words that carry no meaning on their own. A search for "a desk with drawers"
+// must not be scored on how often "a" and "with" appear, and on a catalogue
+// every document contains both.
+const STOP_WORDS: ReadonlySet<string> = new Set([
+  'a', 'about', 'all', 'an', 'and', 'any', 'are', 'as', 'at', 'be', 'been', 'best', 'but', 'by',
+  'can', 'do', 'does', 'for', 'from', 'get', 'good', 'has', 'have', 'how', 'i', 'if', 'in', 'into',
+  'is', 'it', 'its', 'me', 'my', 'need', 'of', 'on', 'one', 'or', 'our', 'out', 'please', 'show',
+  'some', 'that', 'the', 'their', 'them', 'then', 'there', 'these', 'they', 'this', 'to', 'up',
+  'want', 'was', 'we', 'what', 'when', 'where', 'which', 'who', 'why', 'will', 'with', 'would',
+  'you', 'your',
+])
+
+// Enough to describe what somebody is after, few enough that the query stays one
+// pass over the table. A sentence longer than this is a sentence whose first six
+// meaningful words already said it.
+const MAX_TOKENS = 6
+
+/**
+ * The words worth searching for in a question.
+ *
+ * An agent does not send keywords, it sends what its user said - "a desk with
+ * drawers for a small room". Matching that as one string finds nothing, which
+ * the caller reads as "this site sells no desks" rather than as "ask again
+ * differently", and moves on to a site that answered.
+ */
+export function searchTokens(query: string): string[] {
+  const seen = new Set<string>()
+  const tokens: string[] = []
+  // Currency and percent signs survive: "50%" and "£100" are things people
+  // search a shop for, and splitting them apart loses the question.
+  for (const raw of query.toLowerCase().split(/[^a-z0-9\u00a3$%.+-]+/)) {
+    const token = raw.replace(/^[.+-]+/, '').replace(/[.+-]+$/, '')
+    if (token.length < 2) continue
+    if (STOP_WORDS.has(token)) continue
+    if (seen.has(token)) continue
+    seen.add(token)
+    tokens.push(token)
+    if (tokens.length === MAX_TOKENS) break
+  }
+  return tokens
+}
+
+// % and _ are wildcards in LIKE. A search for "50%" must look for "50%".
+function likePattern(value: string): string {
+  return `%${value.replace(/[\\%_]/g, (c) => `\\${c}`)}%`
+}
+
 /**
  * Search across the twins.
  *
- * A plain ILIKE over title, summary and body rather than Postgres full-text: it
- * needs no index this module does not already have, it behaves the same on
- * every install, and at the size a Cactus site reaches the difference is not
- * measurable. If that stops being true, this is the one function to change.
+ * Two passes in one query. The whole phrase is what was actually asked, so it
+ * scores far above anything else; the individual words are the fallback that
+ * keeps a natural-language question from coming back empty, weighted by where
+ * each one turns up and added together so a document matching three of them
+ * outranks one matching a single word in its title.
+ *
+ * A plain ILIKE rather than Postgres full-text: it needs no index this module
+ * does not already have, it behaves the same on every install, and at the size a
+ * Cactus site reaches the difference is not measurable. If that stops being
+ * true, this is the one function to change.
  */
 export async function searchSite(query: string, type: string | null, limit: number): Promise<SearchHit[]> {
   const trimmed = query.trim()
   if (!trimmed) return []
-  // % and _ are wildcards in LIKE. A search for "50%" must look for "50%".
-  const pattern = `%${trimmed.replace(/[\\%_]/g, (c) => `\\${c}`)}%`
+  const phrase = likePattern(trimmed)
+  const tokens = searchTokens(trimmed)
+
+  const tokenScore = tokens.length
+    ? Prisma.join(
+      tokens.map((token) => {
+        const p = likePattern(token)
+        return Prisma.sql`(CASE
+          WHEN "title" ILIKE ${p} ESCAPE '\\' THEN 5
+          WHEN "summary" ILIKE ${p} ESCAPE '\\' THEN 3
+          WHEN "markdown" ILIKE ${p} ESCAPE '\\' THEN 2
+          ELSE 0 END)`
+      }),
+      ' + '
+    )
+    : Prisma.sql`0`
+
+  const tokenMatch = tokens.length
+    ? Prisma.join(
+      tokens.map((token) => {
+        const p = likePattern(token)
+        return Prisma.sql`("title" ILIKE ${p} ESCAPE '\\' OR "summary" ILIKE ${p} ESCAPE '\\' OR "markdown" ILIKE ${p} ESCAPE '\\')`
+      }),
+      ' OR '
+    )
+    : Prisma.sql`FALSE`
 
   const rows = await prisma.$queryRaw<Array<{ path: string; title: string; summary: string | null; entity_type: string }>>`
-    SELECT "path", "title", "summary", "entity_type"
+    SELECT "path", "title", "summary", "entity_type",
+      (CASE WHEN "title" ILIKE ${phrase} ESCAPE '\\' THEN 100 ELSE 0 END)
+      + (CASE WHEN "summary" ILIKE ${phrase} ESCAPE '\\' THEN 40 ELSE 0 END)
+      + (CASE WHEN "markdown" ILIKE ${phrase} ESCAPE '\\' THEN 20 ELSE 0 END)
+      + (${tokenScore}) AS score
     FROM "seo_llm_documents"
     WHERE (${type}::text IS NULL OR "entity_type" = ${type})
-      AND ("title" ILIKE ${pattern} ESCAPE '\\'
-        OR "summary" ILIKE ${pattern} ESCAPE '\\'
-        OR "markdown" ILIKE ${pattern} ESCAPE '\\')
-    ORDER BY
-      -- A title match is what was being looked for; a body match is a mention.
-      (CASE WHEN "title" ILIKE ${pattern} ESCAPE '\\' THEN 0 ELSE 1 END),
-      "title" ASC
+      AND (
+        "title" ILIKE ${phrase} ESCAPE '\\'
+        OR "summary" ILIKE ${phrase} ESCAPE '\\'
+        OR "markdown" ILIKE ${phrase} ESCAPE '\\'
+        OR (${tokenMatch})
+      )
+    ORDER BY score DESC, "title" ASC
     LIMIT ${Prisma.sql`${limit}`}
   `
 

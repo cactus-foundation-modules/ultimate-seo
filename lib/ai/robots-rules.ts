@@ -37,6 +37,13 @@ export function robotsExtraLines(settings: SeoAiSettings, siteUrl: string | null
     // not, which is exactly who it is for.
     lines.push(`# Markdown copies of this site: ${siteUrl}/llms.txt`)
   }
+  // Named here as well as in llms.txt, for the same reason and to a different
+  // reader: an agent that goes straight for robots.txt - which is the one file
+  // every crawler fetches first - and never opens the index would otherwise
+  // never learn the endpoint exists.
+  if (settings.mcp && siteUrl) {
+    lines.push(`# Agent endpoint (MCP, read-only, JSON-RPC over POST): ${siteUrl}/api/m/ultimate-seo/mcp`)
+  }
   return lines
 }
 

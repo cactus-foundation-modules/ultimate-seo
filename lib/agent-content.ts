@@ -7,6 +7,7 @@
 // from a page's bundle. See lib/agent-content/providers.ts in core.
 
 import type { AgentContentProvider } from '@/lib/agent-content/providers'
+import { absolutiseMarkdown } from './ai/absolutise'
 import { observeAiRequest } from './ai/analytics'
 import { getDocumentByPath } from './ai/db'
 import { buildLlmsFull, buildLlmsIndex } from './ai/llms-txt'
@@ -25,7 +26,7 @@ export const ultimateSeoAgentContent: AgentContentProvider = {
     return buildLlmsFull(siteUrl, settings)
   },
 
-  async markdown(path: string) {
+  async markdown(path: string, siteUrl: string) {
     const settings = await getAiSettings()
     if (!settings.markdown) return null
 
@@ -36,6 +37,8 @@ export const ultimateSeoAgentContent: AgentContentProvider = {
     if (!doc) return null
 
     void observeAiRequest(`/${key}.md`)
-    return { markdown: doc.markdown, lastModified: doc.source_updated_at }
+    // Absolute on the way out: this document is handed to a reader with no page
+    // around it and no base address to resolve a bare path against.
+    return { markdown: absolutiseMarkdown(doc.markdown, siteUrl), lastModified: doc.source_updated_at }
   },
 }

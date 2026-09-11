@@ -14,7 +14,7 @@ vi.mock('./tools', async () => {
 import { handleMcpRequest } from './handler'
 import { getPageMarkdown, getSiteInfo, listSections, searchSite } from './tools'
 
-const ctx = { siteName: 'Deskwell', siteUrl: 'https://example.com', maxResults: 25 }
+const ctx = { siteName: 'Deskwell', siteUrl: 'https://example.com', siteSummary: 'Office furniture for UK businesses.', maxResults: 25 }
 
 beforeEach(() => {
   vi.mocked(searchSite).mockReset()
@@ -66,7 +66,7 @@ describe('handleMcpRequest', () => {
     vi.mocked(getSiteInfo).mockResolvedValue(null)
     const res = await handleMcpRequest(
       { jsonrpc: '2.0', id: 10, method: 'tools/call', params: { name: 'get_site_info' } },
-      ctx,
+      { ...ctx, siteSummary: '' },
     )
     const text = (res!.result as { content: Array<{ text: string }> }).content[0]!.text
     expect(text).toContain('has not published its business details')
@@ -124,6 +124,53 @@ describe('handleMcpRequest', () => {
     expect((res!.result as { isError?: boolean }).isError).toBe(true)
   })
 
+  it('hands back a page with its addresses made absolute', async () => {
+    vi.mocked(getPageMarkdown).mockResolvedValue('# Desk\n\n- URL: /office-desks\n\nSee [chairs](/office-seating).')
+    const res = await handleMcpRequest(
+      { jsonrpc: '2.0', id: 61, method: 'tools/call', params: { name: 'get_page', arguments: { path: 'office-desks' } } },
+      ctx,
+    )
+    const text = (res!.result as { content: Array<{ text: string }> }).content[0]!.text
+    expect(text).toContain('- URL: https://example.com/office-desks')
+    expect(text).toContain('[chairs](https://example.com/office-seating)')
+  })
+
+  it('says what the site sells before saying who runs it', async () => {
+    vi.mocked(getSiteInfo).mockResolvedValue('Name: Deskwell')
+    const res = await handleMcpRequest(
+      { jsonrpc: '2.0', id: 62, method: 'tools/call', params: { name: 'get_site_info' } },
+      ctx,
+    )
+    const text = (res!.result as { content: Array<{ text: string }> }).content[0]!.text
+    expect(text).toBe('What this site is: Office furniture for UK businesses.\n\nName: Deskwell')
+  })
+
+  it('still answers get_site_info when the profile is empty but a summary is not', async () => {
+    vi.mocked(getSiteInfo).mockResolvedValue(null)
+    const res = await handleMcpRequest(
+      { jsonrpc: '2.0', id: 63, method: 'tools/call', params: { name: 'get_site_info' } },
+      ctx,
+    )
+    const text = (res!.result as { content: Array<{ text: string }> }).content[0]!.text
+    expect(text).toContain('Office furniture for UK businesses.')
+  })
+
+  it('carries the summary into the handshake instructions', async () => {
+    const res = await handleMcpRequest({ jsonrpc: '2.0', id: 64, method: 'initialize' }, ctx)
+    expect((res!.result as { instructions: string }).instructions).toContain('Office furniture for UK businesses.')
+  })
+
+  it('points a search that found nothing at the tools that would', async () => {
+    vi.mocked(searchSite).mockResolvedValue([])
+    const res = await handleMcpRequest(
+      { jsonrpc: '2.0', id: 65, method: 'tools/call', params: { name: 'search_site', arguments: { query: 'zzzz' } } },
+      ctx,
+    )
+    const text = (res!.result as { content: Array<{ text: string }> }).content[0]!.text
+    expect(text).toContain('list_sections')
+    expect(text).toContain('get_site_info')
+  })
+
   it('refuses a tool it does not have', async () => {
     const res = await handleMcpRequest(
       { jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'delete_everything' } },
@@ -151,7 +198,7 @@ describe('handleMcpRequest', () => {
       ctx,
     )
     expect((res!.result as { content: Array<{ text: string }> }).content[0]!.text)
-      .toBe('Nothing on this site matches that.')
+      .toMatch(/^Nothing on this site matches that\./)
   })
 
   it('lists sections with their counts', async () => {

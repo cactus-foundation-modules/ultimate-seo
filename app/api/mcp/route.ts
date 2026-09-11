@@ -67,6 +67,7 @@ export async function POST(request: Request) {
   const ctx = {
     siteName: config?.siteName ?? 'This site',
     siteUrl,
+    siteSummary: settings.siteSummary,
     maxResults: settings.mcpMaxResults,
   }
 

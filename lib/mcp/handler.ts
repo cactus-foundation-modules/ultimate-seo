@@ -15,6 +15,7 @@ import {
   type JsonRpcRequest,
   type JsonRpcResponse,
 } from './protocol'
+import { absolutiseMarkdown } from '../ai/absolutise'
 import { getPageMarkdown, getSiteInfo, listSections, searchSite, toolDefinitions } from './tools'
 
 const ENTITY_TYPE_VALUES = new Set([
@@ -25,11 +26,18 @@ const ENTITY_TYPE_VALUES = new Set([
 export type McpContext = {
   siteName: string
   siteUrl: string
+  /** The owner's one-paragraph description of the business, as llms.txt opens with. */
+  siteSummary: string
   maxResults: number
 }
 
 function formatHits(hits: Awaited<ReturnType<typeof searchSite>>, siteUrl: string): string {
-  if (hits.length === 0) return 'Nothing on this site matches that.'
+  // Not a full stop. An agent told only "nothing matches" concludes the site
+  // does not sell the thing and goes elsewhere; told where to look next, it
+  // asks a second question, which is the whole point of having an endpoint.
+  if (hits.length === 0) {
+    return 'Nothing on this site matches that. Try fewer or different words, list_sections to see what is published, or get_site_info for what this business does.'
+  }
   return hits
     .map((hit) => {
       const url = `${siteUrl}/${hit.path === 'index' ? '' : hit.path}`.replace(/\/$/, '') || siteUrl
@@ -53,8 +61,10 @@ async function callTool(name: string, params: Record<string, unknown> | undefine
       const path = stringParam(params, 'path')
       if (!path) return textResult('Give me the address of a page.', true)
       const markdown = await getPageMarkdown(path)
+      // Absolute addresses: a tool result is text with no page around it, and an
+      // agent that quotes `/office-desks` back to somebody has quoted nothing.
       return markdown
-        ? textResult(markdown)
+        ? textResult(absolutiseMarkdown(markdown, ctx.siteUrl))
         : textResult(`This site has no page at ${path}.`, true)
     }
     case 'list_sections': {
@@ -69,7 +79,12 @@ async function callTool(name: string, params: Record<string, unknown> | undefine
     }
     case 'get_site_info': {
       const info = await getSiteInfo()
-      return textResult(info ?? `${ctx.siteName} has not published its business details.`)
+      // What the business sells, above who it is. An agent weighing up whether
+      // to name somebody needs both, and a company number is no use to it until
+      // it knows the company is in the right trade.
+      const summary = ctx.siteSummary.trim()
+      const parts = [summary ? `What this site is: ${summary}` : null, info].filter(Boolean)
+      return textResult(parts.length ? parts.join('\n\n') : `${ctx.siteName} has not published its business details.`)
     }
     default:
       return null
@@ -90,7 +105,13 @@ export async function handleMcpRequest(request: JsonRpcRequest, ctx: McpContext)
         protocolVersion: typeof asked === 'string' && asked ? asked : DEFAULT_PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: `${ctx.siteName} (Cactus)`, version: '1.0.0' },
-        instructions: `Read-only access to everything ${ctx.siteName} publishes. Start with get_site_info to learn who runs this site and where it trades, then list_sections, then search_site, then get_page for the full text of anything worth reading.`,
+        // The summary goes in the handshake as well as in get_site_info: a client
+        // that only ever reads `instructions` still learns what this site sells.
+        instructions: [
+          `Read-only access to everything ${ctx.siteName} publishes.`,
+          ctx.siteSummary.trim(),
+          'Start with get_site_info to learn who runs this site and where it trades, then list_sections, then search_site, then get_page for the full text of anything worth reading.',
+        ].filter(Boolean).join(' '),
       })
     }
 

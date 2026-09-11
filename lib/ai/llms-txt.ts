@@ -9,6 +9,7 @@
 import { prisma } from '@/lib/db/prisma'
 import { normaliseStructuredData } from '../settings'
 import { ENTITY_TYPES, type EntityType, type SeoAiSettings, type SeoStructuredData } from '../types'
+import { absolutiseMarkdown } from './absolutise'
 import { businessFactsSection } from './business-facts'
 import { listDocumentBodies, listDocumentIndex, type DocumentIndexRow } from './db'
 import { ENTITY_KIND_LABEL } from './documents'
@@ -172,7 +173,9 @@ export async function buildLlmsFull(siteUrl: string, settings: SeoAiSettings): P
   let included = 0
 
   for (const body of bodies) {
-    const chunk = `${body.markdown.trim()}\n`
+    // Absolute, because an inlined body has been lifted out of the document it
+    // was stored as: nothing downstream knows which site `/office-desks` meant.
+    const chunk = `${absolutiseMarkdown(body.markdown, siteUrl).trim()}\n`
     const size = Buffer.byteLength(chunk, 'utf8')
     // Stop at the ceiling rather than truncating mid-document: half a product
     // description is worse than not having it, because a reader cannot tell.
