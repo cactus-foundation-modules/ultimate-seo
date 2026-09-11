@@ -15,6 +15,7 @@ import { prisma } from '@/lib/db/prisma'
 import { htmlToMarkdown, looksLikeHtml } from './html-to-markdown'
 import { puckToMarkdown } from './puck-markdown'
 import { bulletList, link, oneLine, renderDocument, table, type DocumentSection } from './document-format'
+import { faqSection, normaliseFaqItems, normaliseFaqSet, resolveFaqs, EMPTY_FAQ_SET, type AiFaqItem, type AiFaqSet } from './faqs'
 import type { BreadcrumbStep, PageFacts } from './json-ld'
 import type { DocumentFacets, EntityType, InventoryItem, ProductAvailability, ProductFacets } from '../types'
 
@@ -456,13 +457,38 @@ async function loadProductExtras(ids: string[], hasModule: (name: string) => boo
 
   if (hasModule('product-attributes-for-shop')) {
     try {
-      const rows = await prisma.$queryRaw<Array<{ product_id: string; attribute: string; value: string }>>`
-        SELECT pv."product_id", a."name" AS attribute, av."label" AS value
+      // Only the helpings the owner flagged for the product page's Specification
+      // panel, under the name the panel shows and in the order it shows them.
+      //
+      // The filter is the point of this query, not a tidy-up. A product's
+      // attributes are also where a shop keeps the things it has no intention of
+      // publishing - supplier catalogue codes, commodity codes, and on the site
+      // this was first run against an attribute called "Markup" holding the
+      // margin. None of it appears on the page; all of it appeared here, in the
+      // one file written to be read by assistants and quoted back at customers.
+      // The rule is now the same one the page follows: show_in_spec decides, so
+      // the twin says what the page says and nothing else.
+      const rows = await prisma.$queryRaw<Array<{
+        product_id: string; attribute: string; value: string
+        spec_position: number; attribute_position: number; value_position: number
+      }>>`
+        SELECT DISTINCT ppa."spec_position", a."position" AS attribute_position,
+               av."position" AS value_position, pv."product_id",
+               COALESCE(NULLIF(TRIM(ppa."name_override"), ''), a."name") AS attribute,
+               av."label" AS value
         FROM "pat_product_values" pv
         JOIN "pat_attribute_values" av ON av."id" = pv."value_id"
         JOIN "pat_attributes" a ON a."id" = av."attribute_id"
+        -- Matched on the helping where the value says which one it belongs to,
+        -- and on the attribute where it does not: assignment_id is nullable, and
+        -- a product-level tick saved before helpings could repeat carries none.
+        JOIN "pat_product_attributes" ppa
+          ON ppa."product_id" = pv."product_id"
+         AND ppa."attribute_id" = av."attribute_id"
+         AND (pv."assignment_id" IS NULL OR pv."assignment_id" = ppa."id")
         WHERE pv."product_id" IN (${Prisma.join(ids)})
-        ORDER BY a."position" ASC, a."name" ASC, av."position" ASC
+          AND ppa."show_in_spec" = true
+        ORDER BY ppa."spec_position" ASC, a."position" ASC, av."position" ASC
       `
       extras.attributes = groupBy(rows, (r) => r.product_id)
     } catch {
@@ -729,6 +755,151 @@ function productGroups(product: ProductRow, extras: ProductExtras): string[] {
 // Shop categories and collections, filter collections, directory entries
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Questions and answers
+// ---------------------------------------------------------------------------
+
+/**
+ * Every FAQ set the batch could need, read once.
+ *
+ * Shop keeps them in three places - the product, the category chain above it,
+ * and one shop-wide list - and the page shows all three merged. The twin showed
+ * none of them, which made the single most quotable thing on a product page the
+ * one thing an assistant reading the Markdown could not see: a shopper asking
+ * "will it take my weight" gets an answer on the page and got a specification
+ * table here.
+ */
+type FaqSources = {
+  products: Map<string, AiFaqSet>
+  categories: Map<string, AiFaqSet>
+  collections: Map<string, AiFaqSet>
+  shopWide: AiFaqItem[]
+  /** The shop's master switch. Off means the page shows no questions at all. */
+  enabled: boolean
+}
+
+const NO_FAQS: FaqSources = {
+  products: new Map(), categories: new Map(), collections: new Map(), shopWide: [], enabled: false,
+}
+
+/** One table's `faqs` column for a batch of ids. */
+async function faqColumn(
+  tableName: 'shp_products' | 'shp_categories' | 'shp_collections',
+  ids: string[],
+): Promise<Map<string, AiFaqSet>> {
+  if (ids.length === 0) return new Map()
+  try {
+    const rows = await prisma.$queryRaw<Array<{ id: string; faqs: unknown }>>`
+      SELECT "id", "faqs" FROM ${Prisma.raw(`"${tableName}"`)}
+      WHERE "id" IN (${Prisma.join(ids)}) AND "faqs" IS NOT NULL
+    `
+    return new Map(rows.map((r) => [r.id, normaliseFaqSet(r.faqs)]))
+  } catch {
+    // A shop from before the column existed. No questions is what its pages
+    // show, and what its twins showed until now.
+    return new Map()
+  }
+}
+
+/** Every category's set, because a product inherits from a chain the batch does
+ *  not name. Small on any real site - the same reason categoryTree reads whole. */
+async function categoryFaqs(): Promise<Map<string, AiFaqSet>> {
+  try {
+    const rows = await prisma.$queryRaw<Array<{ id: string; faqs: unknown }>>`
+      SELECT "id", "faqs" FROM "shp_categories" WHERE "faqs" IS NOT NULL
+    `
+    return new Map(rows.map((r) => [r.id, normaliseFaqSet(r.faqs)]))
+  } catch {
+    return new Map()
+  }
+}
+
+async function shopWideFaqs(): Promise<{ items: AiFaqItem[]; enabled: boolean }> {
+  try {
+    const rows = await prisma.$queryRaw<Array<{ faqs: unknown; enabled: string | null }>>`
+      SELECT "config" -> 'productFaqs'          AS faqs,
+             "config" ->> 'productFaqsEnabled'  AS enabled
+      FROM "shp_settings" WHERE "id" = 'singleton' LIMIT 1
+    `
+    const row = rows[0]
+    if (!row) return { items: [], enabled: false }
+    // Absent means on: the switch defaults to true in shop's own config, and a
+    // shop that has never opened the setting is showing its questions.
+    return { items: normaliseFaqItems(row.faqs), enabled: row.enabled !== 'false' }
+  } catch {
+    return { items: [], enabled: false }
+  }
+}
+
+/** Every FAQ set the batch could need, in one round of queries. */
+async function loadFaqs(opts: {
+  productIds: string[]
+  categoryIds: string[]
+  collectionIds: string[]
+  wantsCategoryChain: boolean
+}): Promise<FaqSources> {
+  const [products, collections, categories, wide] = await Promise.all([
+    faqColumn('shp_products', opts.productIds),
+    faqColumn('shp_collections', opts.collectionIds),
+    opts.wantsCategoryChain || opts.categoryIds.length
+      ? categoryFaqs()
+      : Promise.resolve(new Map<string, AiFaqSet>()),
+    shopWideFaqs(),
+  ])
+  return { products, categories, collections, shopWide: wide.items, enabled: wide.enabled }
+}
+
+/**
+ * A category's own set then its parents', nearest first.
+ *
+ * Guarded against a cycle for the same reason categoryTrail is: `parent_id` is a
+ * plain self-reference, and being wrong here is a rebuild that never returns.
+ */
+function categoryFaqChain(
+  id: string | null,
+  tree: Map<string, { id: string; parent_id: string | null }>,
+  sets: Map<string, AiFaqSet>,
+): AiFaqSet[] {
+  const chain: AiFaqSet[] = []
+  const seen = new Set<string>()
+  let current = id ? tree.get(id) : undefined
+  while (current && !seen.has(current.id)) {
+    seen.add(current.id)
+    chain.push(sets.get(current.id) ?? EMPTY_FAQ_SET)
+    current = current.parent_id ? tree.get(current.parent_id) : undefined
+  }
+  return chain
+}
+
+/**
+ * The merged questions for one page, as the nought-or-one sections it adds to
+ * the twin. Nought when the shop has switched FAQs off, when nothing anywhere in
+ * the chain asks a question, or when there is no shop installed at all.
+ *
+ * Returned as an array rather than a nullable section so the callers can spread
+ * it into a section list without a filter at every site.
+ */
+function faqSections(
+  sources: FaqSources,
+  page: {
+    own?: AiFaqSet | undefined
+    categoryId?: string | null
+    tree?: Map<string, { id: string; parent_id: string | null }>
+  },
+): DocumentSection[] {
+  if (!sources.enabled) return []
+  const ancestors = page.tree
+    ? categoryFaqChain(page.categoryId ?? null, page.tree, sources.categories)
+    : []
+  const items = resolveFaqs({
+    own: page.own ?? EMPTY_FAQ_SET,
+    ancestors,
+    shopWide: sources.shopWide,
+  })
+  const section = faqSection(items)
+  return section ? [section] : []
+}
+
 type TaxonomyRow = {
   id: string
   description: string | null
@@ -864,7 +1035,18 @@ export async function buildDocuments(items: InventoryItem[], ctx: BuildContext):
   if (items.length === 0) return []
 
   const byType = groupBy(items, (i) => i.entityType)
-  const money = priceView(await shopPriceConfig())
+  const productIds = (byType.get('shop-product') ?? []).map((i) => i.entityId)
+  const categoryIds = (byType.get('shop-category') ?? []).map((i) => i.entityId)
+  const collectionIds = (byType.get('shop-collection') ?? []).map((i) => i.entityId)
+  const [money, faqs] = await Promise.all([
+    shopPriceConfig().then(priceView),
+    // Skipped outright on a batch with no shop content in it. A page or a blog
+    // post has no FAQ set to read, and a batch of them should not pay for four
+    // queries to be told so.
+    productIds.length || categoryIds.length || collectionIds.length
+      ? loadFaqs({ productIds, categoryIds, collectionIds, wantsCategoryChain: productIds.length > 0 })
+      : Promise.resolve(NO_FAQS),
+  ])
   const out: BuiltDocument[] = []
 
   const compose = (
@@ -960,7 +1142,10 @@ export async function buildDocuments(items: InventoryItem[], ctx: BuildContext):
       const trail = categoryId ? categoryTrail(categoryId, tree) : [HOME]
       compose(
         item,
-        productSections(product, extras, money),
+        [
+          ...productSections(product, extras, money),
+          ...faqSections(faqs, { own: faqs.products.get(product.id), categoryId, tree }),
+        ],
         productFacts(product, extras, money, ctx.publishSupplier),
         { breadcrumb: [...trail, { name: item.title, path: pathOf(item.url) }] },
         productFacets(product, extras, money),
@@ -987,6 +1172,11 @@ export async function buildDocuments(items: InventoryItem[], ctx: BuildContext):
       compose(item, [
         { heading: 'About', body: row ? bodyMarkdown(row.description_puck, row.description ?? row.short_description) : '' },
         { heading: 'Products', body: productTable(listed, money) },
+        // A category inherits up its own chain; a collection is a flat set, so
+        // its own questions are the only level below the shop-wide list.
+        ...faqSections(faqs, type === 'shop-category'
+          ? { categoryId: item.entityId, tree }
+          : { own: faqs.collections.get(item.entityId) }),
       ], undefined, {
         // A category knows where it sits; a collection is a flat set with no
         // parent to name, so its trail is Home and itself.
