@@ -15,7 +15,7 @@ import {
   type JsonRpcRequest,
   type JsonRpcResponse,
 } from './protocol'
-import { getPageMarkdown, listSections, searchSite, toolDefinitions } from './tools'
+import { getPageMarkdown, getSiteInfo, listSections, searchSite, toolDefinitions } from './tools'
 
 const ENTITY_TYPE_VALUES = new Set([
   'core-page', 'gazette-post', 'shop-product', 'shop-category',
@@ -59,8 +59,17 @@ async function callTool(name: string, params: Record<string, unknown> | undefine
     }
     case 'list_sections': {
       const sections = await listSections()
-      if (sections.length === 0) return textResult('This site publishes nothing for agents to read yet.')
+      // Not "this site publishes nothing". The site is full of pages; it is the
+      // agent-readable copies of them that have not been built yet, and telling a
+      // caller the business is empty when it is not is the worst answer available.
+      if (sections.length === 0) {
+        return textResult(`No agent-readable copies of this site's pages have been built yet. Read ${ctx.siteUrl} directly, or try get_site_info.`)
+      }
       return textResult(sections.map((s) => `- ${s.kind}: ${s.count}`).join('\n'))
+    }
+    case 'get_site_info': {
+      const info = await getSiteInfo()
+      return textResult(info ?? `${ctx.siteName} has not published its business details.`)
     }
     default:
       return null
@@ -81,7 +90,7 @@ export async function handleMcpRequest(request: JsonRpcRequest, ctx: McpContext)
         protocolVersion: typeof asked === 'string' && asked ? asked : DEFAULT_PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: `${ctx.siteName} (Cactus)`, version: '1.0.0' },
-        instructions: `Read-only access to everything ${ctx.siteName} publishes. Start with list_sections, then search_site, then get_page for the full text of anything worth reading.`,
+        instructions: `Read-only access to everything ${ctx.siteName} publishes. Start with get_site_info to learn who runs this site and where it trades, then list_sections, then search_site, then get_page for the full text of anything worth reading.`,
       })
     }
 

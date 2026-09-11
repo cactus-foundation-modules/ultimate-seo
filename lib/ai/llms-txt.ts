@@ -7,7 +7,9 @@
 // documents already inlined, for a reader that would rather make one request.
 
 import { prisma } from '@/lib/db/prisma'
-import { ENTITY_TYPES, type EntityType, type SeoAiSettings } from '../types'
+import { normaliseStructuredData } from '../settings'
+import { ENTITY_TYPES, type EntityType, type SeoAiSettings, type SeoStructuredData } from '../types'
+import { businessFactsSection } from './business-facts'
 import { listDocumentBodies, listDocumentIndex, type DocumentIndexRow } from './db'
 import { ENTITY_KIND_LABEL } from './documents'
 
@@ -39,22 +41,36 @@ const FULL_TEXT_TYPES: readonly EntityType[] = ENTITY_TYPES.filter((t) => t !== 
 const FULL_TEXT_MAX_BYTES = 4 * 1024 * 1024
 const FULL_TEXT_MAX_DOCUMENTS = 2000
 
-type SiteFacts = { name: string; summary: string | null }
+type SiteFacts = { name: string; summary: string | null; structuredData: SeoStructuredData | null }
 
 async function siteFacts(settings: SeoAiSettings): Promise<SiteFacts> {
   let name = 'This site'
   let description: string | null = null
-  try {
-    const config = await prisma.siteConfig.findUnique({
+  let structuredData: SeoStructuredData | null = null
+  // Both reads go out together, and each one's failure costs only itself.
+  // Promise.all would not do: it rejects on the first failure, so a profile read
+  // that threw - an install yet to run the migration, a permissions wrinkle -
+  // would take the site's own name and description down with it and publish a
+  // file headed "This site".
+  const [config, profile] = await Promise.allSettled([
+    prisma.siteConfig.findUnique({
       where: { id: 'singleton' },
       select: { siteName: true, description: true, tagline: true },
-    })
-    if (config?.siteName) name = config.siteName
-    description = config?.description?.trim() || config?.tagline?.trim() || null
-  } catch {
-    // Nothing to say about the site is not a reason to publish nothing.
+    }),
+    prisma.$queryRaw<Array<{ structured_data: Record<string, unknown> | null }>>`
+      SELECT "structured_data" FROM "seo_settings" WHERE "id" = 'singleton' LIMIT 1
+    `,
+  ])
+
+  // Nothing to say about the site is not a reason to publish nothing.
+  if (config.status === 'fulfilled' && config.value) {
+    if (config.value.siteName) name = config.value.siteName
+    description = config.value.description?.trim() || config.value.tagline?.trim() || null
   }
-  return { name, summary: settings.siteSummary.trim() || description }
+  if (profile.status === 'fulfilled') {
+    structuredData = normaliseStructuredData(profile.value[0]?.structured_data ?? null)
+  }
+  return { name, summary: settings.siteSummary.trim() || description, structuredData }
 }
 
 function indexLine(row: DocumentIndexRow, siteUrl: string): string {
@@ -73,9 +89,30 @@ function renderIndex(facts: SiteFacts, siteUrl: string, rows: DocumentIndexRow[]
 
   const parts: string[] = [`# ${facts.name}`]
   if (facts.summary) parts.push(`> ${facts.summary.replace(/\s+/g, ' ').trim()}`)
-  parts.push(
-    'Every page below is also available as Markdown at the same address with `.md` on the end.',
-  )
+
+  // Only claimed when there is something to claim it about. This line used to be
+  // unconditional, and on a site whose twins had not been built yet it promised a
+  // reader that every page below had a Markdown copy - below an index with no
+  // pages in it and above nothing at all. A file that lies about what it holds is
+  // worse than a file that admits it holds nothing.
+  if (rows.length > 0 && settings.markdown) {
+    parts.push('Every page below is also available as Markdown at the same address with `.md` on the end.')
+  }
+
+  // Who this actually is. Placed above the page lists on purpose: a reader with a
+  // small context window takes the top of the file, and identity is what decides
+  // whether anything underneath it is worth fetching.
+  //
+  // Gated on emitOrganization as well as on its own switch. The profile can be
+  // filled in and deliberately not published - and an owner who has turned the
+  // organisation record OFF has said, in the only way the screen offers, that
+  // they do not want these facts on their site. Publishing them here anyway
+  // because a different switch defaults to on is not a decision this module gets
+  // to make on an update.
+  if (settings.businessFacts && facts.structuredData?.emitOrganization) {
+    const about = businessFactsSection(facts.structuredData, facts.name)
+    if (about) parts.push(about)
+  }
 
   // Where the agent endpoint is announced. There is no agreed well-known path
   // for one, so rather than invent a standard and serve a file nothing asks
@@ -97,6 +134,13 @@ function renderIndex(facts: SiteFacts, siteUrl: string, rows: DocumentIndexRow[]
     if (covered.has(type)) continue
     const heading = ENTITY_KIND_LABEL[type as EntityType] ?? type
     parts.push(`## ${heading}\n\n${rowsOfType.map((row) => indexLine(row, siteUrl)).join('\n')}`)
+  }
+
+  // Said out loud rather than left as an absence. An empty index and a
+  // still-building one look identical to a reader, and the difference decides
+  // whether it comes back.
+  if (rows.length === 0) {
+    parts.push('_No page index is published yet. The Markdown copies of this site are built on a schedule and this file will list them once that has run._')
   }
 
   return `${parts.join('\n\n').trim()}\n`

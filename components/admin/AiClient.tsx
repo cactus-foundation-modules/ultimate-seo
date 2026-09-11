@@ -259,6 +259,13 @@ export default function AiClient({ canManage, siteUrl }: { canManage: boolean; s
           onChange={(v) => update({ llmsFull: v })}
         />
         <Toggle
+          label="Say who you are at the top of the index"
+          help="Your registered name, company number, VAT number, address, the countries you sell to and how to reach you - taken straight from Structured data, and only while the organisation details there are being published. It is what an assistant checks before it will name you to anybody."
+          checked={settings.businessFacts}
+          disabled={!settings.llmsTxt}
+          onChange={(v) => update({ businessFacts: v })}
+        />
+        <Toggle
           label="Give every page a Markdown twin"
           help="The same page at the same address with .md on the end, in plain text with no menus, buttons or scripts around it."
           checked={settings.markdown}
@@ -314,18 +321,29 @@ export default function AiClient({ canManage, siteUrl }: { canManage: boolean; s
                 : 'Nothing built yet.'}
             </span>
           </div>
+          {stats && stats.count === 0 && (
+            // Loud, because everything on this page is downstream of it and the
+            // symptoms all look like something else: an index with no pages in it,
+            // .md addresses that answer 404, an agent endpoint that says the site
+            // publishes nothing, and no breadcrumbs on any page.
+            <div className="alert alert-warning" style={{ marginTop: '0.75rem' }}>
+              Nothing has been built yet, so the index, the Markdown copies and the agent endpoint have
+              nothing to show. Press <strong>Rebuild everything</strong> once - after that the nightly
+              job keeps up on its own.
+            </div>
+          )}
           {rebuilt && (
             <p style={{ ...helpStyle, marginTop: '0.5rem' }}>
               Built {rebuilt.built.toLocaleString('en-GB')} pages in {(rebuilt.tookMs / 1000).toFixed(1)}s
               {rebuilt.skipped > 0 ? `, left ${rebuilt.skipped.toLocaleString('en-GB')} already up to date alone` : ''}
               {rebuilt.removed > 0 ? `, removed ${rebuilt.removed}` : ''}
               {rebuilt.clashes.length > 0 ? `. ${rebuilt.clashes.length} pages share an address with another and were skipped: ${rebuilt.clashes.slice(0, 3).join(', ')}` : '.'}
-              {rebuilt.incomplete && ' There was more than would fit in one go - run it again to finish, or leave it to the weekly job.'}
+              {rebuilt.incomplete && ' There was more than would fit in one go - run it again to finish, or leave it to the nightly job.'}
             </p>
           )}
           <p style={{ ...helpStyle, marginTop: '0.5rem' }}>
-            Twins are built once a week and whenever you edit a summary, so serving one costs a single
-            lookup. The rebuild is the expensive part, and it runs once.
+            Twins are built overnight and whenever you edit a summary, so serving one costs a single
+            lookup. The rebuild is the expensive part, and it happens while nobody is looking.
           </p>
           {settings.llmsTxt && (
             <p style={{ ...helpStyle, marginTop: '0.5rem' }}>

@@ -218,6 +218,7 @@ export function normaliseAiSettings(raw: Record<string, unknown> | null): SeoAiS
     siteSummary: str(raw?.siteSummary).slice(0, 2000),
     llmsTxt: bool(raw?.llmsTxt, d.llmsTxt),
     llmsFull: bool(raw?.llmsFull, d.llmsFull),
+    businessFacts: bool(raw?.businessFacts, d.businessFacts),
     markdown: bool(raw?.markdown, d.markdown),
     markdownTypes: raw && 'markdownTypes' in raw ? entityTypes(raw.markdownTypes) : [...d.markdownTypes],
     abstracts: bool(raw?.abstracts, d.abstracts),

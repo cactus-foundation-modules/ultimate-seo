@@ -33,14 +33,23 @@ const BATCH_SIZE = 100
  * How long a rebuild may run before it stops and leaves the rest for next time.
  *
  * Measured on a real catalogue: a hundred products, with their variations,
- * attributes and 3D models, take about a second and a half. So twenty thousand
- * of them is five minutes, and the route that calls this has a ceiling of five.
+ * attributes and 3D models, take about a second and a half.
+ *
+ * Sized to fit inside a slice of core's cron dispatcher, NOT inside some ceiling
+ * of this module's own choosing. A module route file cannot set its own
+ * maxDuration - core's catch-all at app/api/m/[module]/[...path] sets one ceiling
+ * of 60 seconds for every module route, and the nightly dispatcher then gives a
+ * job whatever is left of its own 60s tick. This budget was four minutes, which
+ * is a number no module route has ever been able to reach: every scheduled
+ * rebuild was aborted mid-flight, recorded as a failure, and the whole AI half of
+ * the module - llms.txt, the Markdown twins, the agent endpoint, every page's
+ * breadcrumbs - stayed empty on a live site for as long as that lasted.
  *
  * Stopping early is safe because the next run skips everything already built:
- * a catalogue too big for one pass finishes over two, and every pass after that
- * is nearly free because almost nothing has changed.
+ * a catalogue too big for one pass finishes over several, and every pass after
+ * that is nearly free because almost nothing has changed.
  */
-const TIME_BUDGET_MS = 240_000
+const TIME_BUDGET_MS = 40_000
 
 /** Whether this entity is published and therefore has any business being copied. */
 function isPublic(item: InventoryItem): boolean {

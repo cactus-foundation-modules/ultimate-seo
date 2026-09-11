@@ -59,11 +59,20 @@ function Field({ id, label, help, children }: { id: string; label: string; help?
   )
 }
 
-function Toggle({ checked, onChange, label, help }: { checked: boolean; onChange: (v: boolean) => void; label: string; help: string }) {
+function Toggle({ checked, onChange, label, help, disabled }: { checked: boolean; onChange: (v: boolean) => void; label: string; help: string; disabled?: boolean }) {
   return (
     <div style={{ marginBottom: '0.75rem' }}>
-      <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.8125rem', color: 'var(--color-text)' }}>
-        <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      <label style={{
+        display: 'flex',
+        gap: '0.5rem',
+        alignItems: 'center',
+        fontSize: '0.8125rem',
+        // Greyed and not-allowed, so a switch that cannot do anything looks like
+        // one rather than like a switch that is simply ignoring the click.
+        color: disabled ? 'var(--color-text-secondary)' : 'var(--color-text)',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+      }}>
+        <input type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
         {label}
       </label>
       <p style={helpStyle}>{help}</p>
@@ -225,12 +234,28 @@ export default function StructuredDataClient() {
               />
               <Toggle
                 checked={form.emitSearchAction}
+                // Greyed rather than merely explained. The builder drops the
+                // search box along with the website record it hangs off, so a
+                // switch left on with the one above off did nothing at all and
+                // said nothing about it.
+                disabled={!form.emitWebSite}
                 onChange={(v) => set({ emitSearchAction: v })}
                 label="Offer a search box in search results"
                 help="Lets Google put a search box for your site directly in its results. Needs the website details switched on."
               />
             </div>
-            {form.emitSearchAction && text(
+            {form.emitOrganization && !form.emitWebSite && (
+              // The commonest half-finished state on this screen, and an easy one
+              // to leave behind: the organisation record goes out on its own, with
+              // nothing naming the site or tying the two together, and the search
+              // box below is switched off whatever it says.
+              <div className="alert alert-info" style={{ marginTop: '0.75rem' }}>
+                The organisation is being published but the website is not. The website record is
+                what names the site, points back at the organisation and carries the search box -
+                on its own, the organisation record is half an introduction.
+              </div>
+            )}
+            {form.emitWebSite && form.emitSearchAction && text(
               'searchUrlTemplate',
               'Search address',
               <>Must contain <code>{'{search_term_string}'}</code> where the visitor&apos;s words go.</>,

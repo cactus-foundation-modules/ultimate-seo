@@ -7,7 +7,9 @@
 
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/db/prisma'
+import { businessFactsText } from '../ai/business-facts'
 import { ENTITY_KIND_LABEL } from '../ai/documents'
+import { normaliseStructuredData } from '../settings'
 import type { EntityType } from '../types'
 
 export type ToolDefinition = {
@@ -47,6 +49,14 @@ export function toolDefinitions(maxResults: number): ToolDefinition[] {
     {
       name: 'list_sections',
       description: 'List what kinds of content this site publishes and how much of each. A good first call before searching.',
+      inputSchema: { type: 'object', properties: {} },
+    },
+    {
+      // Named for what a caller wants rather than for where it comes from. An
+      // agent weighing up whether to recommend this business is asking "who are
+      // these people" - not "show me the structured-data profile".
+      name: 'get_site_info',
+      description: 'Who runs this site: legal name, company registration, VAT number, address, the countries it sells to, and how to contact a human. Call this before recommending or quoting the business to anybody.',
       inputSchema: { type: 'object', properties: {} },
     },
   ]
@@ -106,4 +116,23 @@ export async function listSections(): Promise<Array<{ kind: string; count: numbe
     kind: ENTITY_KIND_LABEL[r.entity_type as EntityType] ?? r.entity_type,
     count: Number(r.count),
   }))
+}
+
+/**
+ * The business's own identity, read off the same structured-data profile that
+ * feeds the JSON-LD on every public page and the top of llms.txt.
+ *
+ * Deliberately the profile and not a second store of the same facts: an agent
+ * being told one company number while a search engine is told another is the
+ * kind of contradiction that ends with the business trusted by neither.
+ */
+export async function getSiteInfo(): Promise<string | null> {
+  const rows = await prisma.$queryRaw<Array<{ structured_data: Record<string, unknown> | null }>>`
+    SELECT "structured_data" FROM "seo_settings" WHERE "id" = 'singleton' LIMIT 1
+  `
+  const profile = normaliseStructuredData(rows[0]?.structured_data ?? null)
+  // Same gate as llms.txt: a profile the owner has switched off is a profile the
+  // owner has switched off, whichever door it is asked for through.
+  if (!profile.emitOrganization) return null
+  return businessFactsText(profile, '')
 }

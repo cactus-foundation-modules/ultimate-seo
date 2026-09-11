@@ -14,7 +14,12 @@ import { getAiSettings } from '@/modules/ultimate-seo/lib/settings'
 // a week of an assistant quoting last month's price. It is affordable at that
 // rate precisely because the rebuild is incremental: on a night when nothing
 // has been edited it reads the inventory, compares timestamps and stops.
-export const maxDuration = 300
+
+// No maxDuration here on purpose. A module route file cannot set one - core's
+// catch-all at app/api/m/[module]/[...path] sets the single ceiling every module
+// route runs under, and an export here is silently ignored. It used to say 300,
+// which read as permission to take five minutes and was never anything of the
+// sort. See TIME_BUDGET_MS in lib/ai/materialise.ts.
 
 export async function GET(request: NextRequest) {
   const secret = process.env.CRON_SECRET

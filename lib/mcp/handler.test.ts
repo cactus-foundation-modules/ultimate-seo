@@ -7,11 +7,12 @@ vi.mock('./tools', async () => {
     searchSite: vi.fn(),
     getPageMarkdown: vi.fn(),
     listSections: vi.fn(),
+    getSiteInfo: vi.fn(),
   }
 })
 
 import { handleMcpRequest } from './handler'
-import { getPageMarkdown, listSections, searchSite } from './tools'
+import { getPageMarkdown, getSiteInfo, listSections, searchSite } from './tools'
 
 const ctx = { siteName: 'Deskwell', siteUrl: 'https://example.com', maxResults: 25 }
 
@@ -19,6 +20,7 @@ beforeEach(() => {
   vi.mocked(searchSite).mockReset()
   vi.mocked(getPageMarkdown).mockReset()
   vi.mocked(listSections).mockReset()
+  vi.mocked(getSiteInfo).mockReset()
 })
 
 describe('handleMcpRequest', () => {
@@ -39,10 +41,46 @@ describe('handleMcpRequest', () => {
     expect(await handleMcpRequest({ jsonrpc: '2.0', method: 'notifications/initialized' }, ctx)).toBeNull()
   })
 
-  it('lists its three tools', async () => {
+  it('lists its tools', async () => {
     const res = await handleMcpRequest({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, ctx)
     const names = (res!.result as { tools: Array<{ name: string }> }).tools.map((t) => t.name)
-    expect(names).toEqual(['search_site', 'get_page', 'list_sections'])
+    expect(names).toEqual(['search_site', 'get_page', 'list_sections', 'get_site_info'])
+  })
+
+  it('points a new client at get_site_info first', async () => {
+    const res = await handleMcpRequest({ jsonrpc: '2.0', id: 1, method: 'initialize' }, ctx)
+    expect((res!.result as { instructions: string }).instructions).toContain('get_site_info')
+  })
+
+  it('answers get_site_info with the business details', async () => {
+    vi.mocked(getSiteInfo).mockResolvedValue('Name: Deskwell\nVAT number: GB525366781')
+    const res = await handleMcpRequest(
+      { jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'get_site_info' } },
+      ctx,
+    )
+    const text = (res!.result as { content: Array<{ text: string }> }).content[0]!.text
+    expect(text).toContain('GB525366781')
+  })
+
+  it('says the details are missing rather than inventing any', async () => {
+    vi.mocked(getSiteInfo).mockResolvedValue(null)
+    const res = await handleMcpRequest(
+      { jsonrpc: '2.0', id: 10, method: 'tools/call', params: { name: 'get_site_info' } },
+      ctx,
+    )
+    const text = (res!.result as { content: Array<{ text: string }> }).content[0]!.text
+    expect(text).toContain('has not published its business details')
+  })
+
+  it('does not tell a caller the site is empty when only the copies are', async () => {
+    vi.mocked(listSections).mockResolvedValue([])
+    const res = await handleMcpRequest(
+      { jsonrpc: '2.0', id: 11, method: 'tools/call', params: { name: 'list_sections' } },
+      ctx,
+    )
+    const text = (res!.result as { content: Array<{ text: string }> }).content[0]!.text
+    expect(text).toContain('https://example.com')
+    expect(text).not.toContain('publishes nothing')
   })
 
   it('searches and formats the hits with both addresses', async () => {

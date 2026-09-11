@@ -28,6 +28,7 @@ const Body = z.object({
   siteSummary: z.string().max(2000),
   llmsTxt: z.boolean(),
   llmsFull: z.boolean(),
+  businessFacts: z.boolean(),
   markdown: z.boolean(),
   markdownTypes: z.array(z.enum(ENTITY_TYPES)).max(ENTITY_TYPES.length),
   abstracts: z.boolean(),

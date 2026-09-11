@@ -313,6 +313,17 @@ export type SeoAiSettings = {
   llmsTxt: boolean
   /** Publish /llms-full.txt as well - the index with the short documents inlined. */
   llmsFull: boolean
+  /**
+   * Publish the business's own identity at the top of llms.txt, and answer it
+   * over the agent endpoint: legal name, registration number, VAT, address,
+   * where it trades, how to reach it.
+   *
+   * Read straight off the structured-data profile, so it says exactly what the
+   * JSON-LD on every page already says. An assistant deciding whether to put a
+   * supplier in front of somebody is deciding whether that supplier is
+   * identifiable, and this is the file it reads to find out.
+   */
+  businessFacts: boolean
   /** Publish the Markdown twin of each page at its own address with .md on the end. */
   markdown: boolean
   /** Which content types get a twin. Everything, unless an owner narrows it. */
@@ -352,6 +363,11 @@ export const DEFAULT_AI_SETTINGS: SeoAiSettings = {
   // request, so each is a decision an owner makes deliberately.
   llmsTxt: true,
   llmsFull: true,
+  // On with the rest of the index it belongs to. It publishes nothing the owner
+  // has not already typed into the structured-data profile, and nothing the
+  // JSON-LD on every public page is not already saying out loud; it simply says
+  // it somewhere a reader that does not parse HTML can find it.
+  businessFacts: true,
   markdown: true,
   markdownTypes: [...ENTITY_TYPES],
   abstracts: true,

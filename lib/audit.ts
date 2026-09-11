@@ -22,7 +22,14 @@ import { listSitemapEntries } from './db'
 // is exactly what happened to the weekly one, week after week. A manual audit from
 // the admin screen gets the same budget and reports 'partial' if the site is larger
 // than one pass; the crawl is deliberately bounded either way.
-const TIME_BUDGET_MS = 38_000
+// 38_000 was still too generous, and the weekly job went on failing: the budget
+// gated the START of a fetch, not its end, so a worker could pick up a page at
+// 37.9s, wait the full FETCH_TIMEOUT_MS on it, and only then write the run down -
+// 48 seconds of crawl on top of however long collecting the URLs took. The
+// dispatcher had hung up long before that. The loop below now refuses to start a
+// page it cannot also finish, which makes this figure the real ceiling it claims
+// to be.
+const TIME_BUDGET_MS = 30_000
 const FETCH_TIMEOUT_MS = 10_000
 const CONCURRENCY = 4
 
@@ -210,7 +217,10 @@ export async function runSiteAudit(trigger: 'manual' | 'cron'): Promise<{ runId:
 
   try {
     const workers = Array.from({ length: CONCURRENCY }, async () => {
-      while (queue.length > 0 && Date.now() - started < TIME_BUDGET_MS) {
+      // The budget has to cover the SLOWEST possible outcome of the page about to
+      // be fetched, not the moment it is picked up. A page started with three
+      // seconds left can still take ten.
+      while (queue.length > 0 && Date.now() - started + FETCH_TIMEOUT_MS < TIME_BUDGET_MS) {
         const url = queue.shift()
         if (!url) break
         let issues: Issue[]
