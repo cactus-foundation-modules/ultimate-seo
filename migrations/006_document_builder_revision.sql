@@ -1,0 +1,32 @@
+-- Which revision of the twin BUILDER wrote each stored document.
+--
+-- The rebuild decides what to redo by comparing the entity's `updated_at` with
+-- the stored `source_updated_at`: has the CONTENT moved since this was written.
+-- That is the right question while only content changes, and the wrong one the
+-- moment the builder itself changes - a product nobody has edited since is
+-- skipped for ever, so an install goes on serving twins written by code it no
+-- longer runs.
+--
+-- It bit on 2026-09-12. ultimate-seo 0.1.18 taught the builder to publish a
+-- page's FAQs and to stop publishing attributes the product page hides; the
+-- install took the update, the code was live, and every one of its twins stayed
+-- exactly as it was - no questions, and the internal attributes still in them -
+-- with no path to correction short of somebody finding the "Rebuild everything"
+-- button.
+--
+-- So the staleness test gains a second half: a document written by an older
+-- builder is stale whatever its content has been doing. DOCUMENT_BUILDER_REVISION
+-- in lib/ai/documents.ts is bumped whenever the output shape changes, and the
+-- next nightly run picks the whole catalogue up on its own, a time-budget's worth
+-- at a time.
+--
+-- 003 is NOT edited to match, and must not be: it was released and has already
+-- run on live installs, so its bytes are frozen and
+-- scripts/check-frozen-migrations.test.ts fails the build on a change to them.
+-- (It caught exactly that on the first attempt at this file.) A fresh install
+-- runs 001 through 006 in order and ends up with the same table.
+--
+-- Default 0 rather than the current revision, deliberately: every document that
+-- already exists was written before this column did, so all of them are older
+-- than whatever the code now says, which is exactly true.
+ALTER TABLE "seo_llm_documents" ADD COLUMN IF NOT EXISTS "builder_revision" INTEGER NOT NULL DEFAULT 0;
