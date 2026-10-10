@@ -5,6 +5,7 @@
 // robots.txt reads it) and holds the module's own global defaults.
 
 import { useEffect, useState } from 'react'
+import { SettingsHeaderActions, SettingsHeaderStatus } from '@/components/admin/SettingsHeaderActions'
 import { helpStyle, inputStyle, labelStyle } from './shared'
 
 const API = '/api/m/ultimate-seo/admin'
@@ -71,8 +72,8 @@ export function UltimateSeoSettingsTab() {
   const set = (patch: Partial<Settings>) => setSettings({ ...settings, ...patch })
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', maxWidth: 640 }}>
-      <section>
+    <div className="settings-masonry">
+      <section className="card">
         <h3 style={{ fontSize: '0.9375rem', margin: '0 0 0.25rem' }}>Search engine visibility</h3>
         <p style={{ ...helpStyle, marginBottom: '0.5rem' }}>
           The master switch. While hidden, robots.txt tells every crawler to go away.
@@ -97,7 +98,7 @@ export function UltimateSeoSettingsTab() {
         )}
       </section>
 
-      <section>
+      <section className="card">
         <h3 style={{ fontSize: '0.9375rem', margin: '0 0 0.25rem' }}>Organisation details</h3>
         <p style={{ ...helpStyle, marginBottom: '0.5rem' }}>
           Used by the “Structured data” page-builder block to tell search engines who is behind the site.
@@ -127,7 +128,7 @@ export function UltimateSeoSettingsTab() {
         </div>
       </section>
 
-      <section>
+      <section className="card">
         <h3 style={{ fontSize: '0.9375rem', margin: '0 0 0.25rem' }}>Analyser targets</h3>
         <p style={{ ...helpStyle, marginBottom: '0.5rem' }}>
           The defaults follow current good practice; change them only if you enjoy arguing with an algorithm.
@@ -153,11 +154,10 @@ export function UltimateSeoSettingsTab() {
         </div>
       </section>
 
-      <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-        <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save SEO settings'}</button>
-        {saved && <span style={{ fontSize: '0.8125rem', color: 'var(--color-success)' }}>Saved</span>}
-        {error && settings && <span style={{ fontSize: '0.8125rem', color: 'var(--color-error)' }}>{error}</span>}
-      </div>
+      <SettingsHeaderActions>
+        <SettingsHeaderStatus message={saved ? 'Saved' : null} error={error} />
+        <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</button>
+      </SettingsHeaderActions>
     </div>
   )
 }
