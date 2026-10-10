@@ -1,12 +1,13 @@
 'use client'
 
-// "SEO" tab on the core admin settings page (settingsTabs manifest entry).
+// Settings > General > SEO (settingsTabs manifest entry, filed under General).
 // Takes over the search-visibility switch (stored on core SiteConfig, where
 // robots.txt reads it) and holds the module's own global defaults.
 
 import { useEffect, useState } from 'react'
 import { SettingsHeaderActions, SettingsHeaderStatus } from '@/components/admin/SettingsHeaderActions'
 import { helpStyle, inputStyle, labelStyle } from './shared'
+import { InfoTip } from '@/components/admin/InfoTip'
 
 const API = '/api/m/ultimate-seo/admin'
 
@@ -72,20 +73,12 @@ export function UltimateSeoSettingsTab() {
   const set = (patch: Partial<Settings>) => setSettings({ ...settings, ...patch })
 
   return (
-    <div className="settings-masonry">
+    <div className="settings-cols">
       <section className="card">
-        <h3 style={{ fontSize: '0.9375rem', margin: '0 0 0.25rem' }}>Search engine visibility</h3>
-        <p style={{ ...helpStyle, marginBottom: '0.5rem' }}>
-          The master switch. While hidden, robots.txt tells every crawler to go away.
-        </p>
-        <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.8125rem', color: 'var(--color-text)' }}>
-          <input
-            type="checkbox"
-            checked={!settings.hideFromCrawlers}
-            onChange={(e) => set({ hideFromCrawlers: !e.target.checked })}
-          />
-          Let search engines index this site
-        </label>
+        <div className="card-title">
+          Search engines and the analyser
+          <InfoTip>The analyser defaults follow current good practice; change them only if you enjoy arguing with an algorithm.</InfoTip>
+        </div>
         {settings.hideFromCrawlers && (
           <p style={{ ...helpStyle, color: 'var(--color-warning)' }}>
             Currently hidden - all the SEO polish in the world will not help until this is on.
@@ -96,13 +89,40 @@ export function UltimateSeoSettingsTab() {
             Site status is “{settings.siteStatus}”, which also blocks crawlers regardless of this switch.
           </p>
         )}
+        <div className="settings-fields">
+          <div className="settings-field field--beside-input">
+            <label className="settings-check">
+          <input
+            type="checkbox"
+            checked={!settings.hideFromCrawlers}
+            onChange={(e) => set({ hideFromCrawlers: !e.target.checked })}
+          />
+          Let search engines index this site
+          <InfoTip>The master switch. While hidden, robots.txt tells every crawler to go away.</InfoTip>
+        </label>
+          </div>
+          {([
+            ['auditMaxPages', 'Audit page limit'],
+            ['titleMin', 'Title min'], ['titleMax', 'Title max'],
+            ['descMin', 'Description min'], ['descMax', 'Description max'],
+          ] as const).map(([key, label]) => (
+            <div key={key} className="settings-field">
+              <label style={labelStyle} htmlFor={`seo-target-${key}`}>{label}</label>
+              <input
+                id={`seo-target-${key}`}
+                type="number"
+                value={settings.targets[key]}
+                onChange={(e) => set({ targets: { ...settings.targets, [key]: parseInt(e.target.value, 10) || 0 } })}
+                style={inputStyle}
+                min={1}
+              />
+            </div>
+          ))}
+        </div>
       </section>
 
       <section className="card">
-        <h3 style={{ fontSize: '0.9375rem', margin: '0 0 0.25rem' }}>Organisation details</h3>
-        <p style={{ ...helpStyle, marginBottom: '0.5rem' }}>
-          Used by the “Structured data” page-builder block to tell search engines who is behind the site.
-        </p>
+        <div className="card-title">Organisation details <InfoTip>Used by the &ldquo;Structured data&rdquo; page-builder block to tell search engines who is behind the site.</InfoTip></div>
         <div className="settings-fields">
           <div className="settings-field">
             <label style={labelStyle} htmlFor="seo-org-name">Name</label>
@@ -125,32 +145,6 @@ export function UltimateSeoSettingsTab() {
           <label style={labelStyle} htmlFor="seo-org-sameas">Official profiles (one URL per line)</label>
           <textarea id="seo-org-sameas" value={sameAsText} onChange={(e) => setSameAsText(e.target.value)} style={{ ...inputStyle, minHeight: 70, resize: 'vertical' }} placeholder={'https://www.facebook.com/…\nhttps://www.instagram.com/…'} />
           <p style={helpStyle}>Social pages, company registries - anywhere that proves you are you.</p>
-        </div>
-      </section>
-
-      <section className="card">
-        <h3 style={{ fontSize: '0.9375rem', margin: '0 0 0.25rem' }}>Analyser targets</h3>
-        <p style={{ ...helpStyle, marginBottom: '0.5rem' }}>
-          The defaults follow current good practice; change them only if you enjoy arguing with an algorithm.
-        </p>
-        <div className="settings-fields">
-          {([
-            ['titleMin', 'Title min'], ['titleMax', 'Title max'],
-            ['descMin', 'Description min'], ['descMax', 'Description max'],
-            ['auditMaxPages', 'Audit page limit'],
-          ] as const).map(([key, label]) => (
-            <div key={key} className="settings-field">
-              <label style={labelStyle} htmlFor={`seo-target-${key}`}>{label}</label>
-              <input
-                id={`seo-target-${key}`}
-                type="number"
-                value={settings.targets[key]}
-                onChange={(e) => set({ targets: { ...settings.targets, [key]: parseInt(e.target.value, 10) || 0 } })}
-                style={inputStyle}
-                min={1}
-              />
-            </div>
-          ))}
         </div>
       </section>
 
