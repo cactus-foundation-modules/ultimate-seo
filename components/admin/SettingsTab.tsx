@@ -103,28 +103,28 @@ export function UltimateSeoSettingsTab() {
         <p style={{ ...helpStyle, marginBottom: '0.5rem' }}>
           Used by the “Structured data” page-builder block to tell search engines who is behind the site.
         </p>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-          <div>
+        <div className="settings-fields">
+          <div className="settings-field">
             <label style={labelStyle} htmlFor="seo-org-name">Name</label>
             <input id="seo-org-name" value={settings.organization.name} onChange={(e) => set({ organization: { ...settings.organization, name: e.target.value } })} style={inputStyle} maxLength={200} />
           </div>
-          <div>
+          <div className="settings-field">
             <label style={labelStyle} htmlFor="seo-org-legal">Legal name (optional)</label>
             <input id="seo-org-legal" value={settings.organization.legalName} onChange={(e) => set({ organization: { ...settings.organization, legalName: e.target.value } })} style={inputStyle} maxLength={200} />
           </div>
-        </div>
-        <div style={{ marginTop: '0.75rem' }}>
-          <label style={labelStyle} htmlFor="seo-org-logo">Logo URL</label>
-          <input id="seo-org-logo" value={settings.organization.logoUrl} onChange={(e) => set({ organization: { ...settings.organization, logoUrl: e.target.value } })} style={inputStyle} maxLength={500} placeholder="https://…" />
+          <div className="settings-field">
+            <label style={labelStyle} htmlFor="seo-org-logo">Logo URL</label>
+            <input id="seo-org-logo" value={settings.organization.logoUrl} onChange={(e) => set({ organization: { ...settings.organization, logoUrl: e.target.value } })} style={inputStyle} maxLength={500} placeholder="https://…" />
+          </div>
+          <div className="settings-field">
+            <label style={labelStyle} htmlFor="seo-twitter">X / Twitter handle</label>
+            <input id="seo-twitter" value={settings.social.twitterHandle} onChange={(e) => set({ social: { twitterHandle: e.target.value } })} style={inputStyle} maxLength={60} placeholder="@yoursite" />
+          </div>
         </div>
         <div style={{ marginTop: '0.75rem' }}>
           <label style={labelStyle} htmlFor="seo-org-sameas">Official profiles (one URL per line)</label>
           <textarea id="seo-org-sameas" value={sameAsText} onChange={(e) => setSameAsText(e.target.value)} style={{ ...inputStyle, minHeight: 70, resize: 'vertical' }} placeholder={'https://www.facebook.com/…\nhttps://www.instagram.com/…'} />
           <p style={helpStyle}>Social pages, company registries - anywhere that proves you are you.</p>
-        </div>
-        <div style={{ marginTop: '0.75rem', maxWidth: 280 }}>
-          <label style={labelStyle} htmlFor="seo-twitter">X / Twitter handle</label>
-          <input id="seo-twitter" value={settings.social.twitterHandle} onChange={(e) => set({ social: { twitterHandle: e.target.value } })} style={inputStyle} maxLength={60} placeholder="@yoursite" />
         </div>
       </section>
 
@@ -133,13 +133,13 @@ export function UltimateSeoSettingsTab() {
         <p style={{ ...helpStyle, marginBottom: '0.5rem' }}>
           The defaults follow current good practice; change them only if you enjoy arguing with an algorithm.
         </p>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.75rem' }}>
+        <div className="settings-fields">
           {([
             ['titleMin', 'Title min'], ['titleMax', 'Title max'],
             ['descMin', 'Description min'], ['descMax', 'Description max'],
             ['auditMaxPages', 'Audit page limit'],
           ] as const).map(([key, label]) => (
-            <div key={key}>
+            <div key={key} className="settings-field">
               <label style={labelStyle} htmlFor={`seo-target-${key}`}>{label}</label>
               <input
                 id={`seo-target-${key}`}
