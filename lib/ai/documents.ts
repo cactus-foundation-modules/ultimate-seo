@@ -19,6 +19,8 @@ import { faqSection, normaliseFaqItems, normaliseFaqSet, resolveFaqs, EMPTY_FAQ_
 import type { BreadcrumbStep, PageFacts } from './json-ld'
 import type { DocumentFacets, EntityType, InventoryItem, ProductAvailability, ProductFacets } from '../types'
 
+export { DOCUMENT_BUILDER_REVISION } from './builder-revision'
+
 export type BuiltDocument = {
   entityType: EntityType
   entityId: string
@@ -372,9 +374,19 @@ type ProductExtras = {
   collections: Map<string, Array<{ id: string; name: string; slug: string }>>
   attributes: Map<string, Array<{ attribute: string; value: string }>>
   variants: Map<string, VariantRow[]>
+  /** Each listing's options, in the order the page asks them, with the values
+   *  at least one live combination actually uses. */
+  options: Map<string, Array<{ name: string; values: string[] }>>
   /** Product ids - parents and variant children alike - that have a 3D model. */
   modelled: Set<string>
   photoCounts: Map<string, number>
+  photos: Map<string, Array<{ url: string; alt: string | null }>>
+  addons: Map<string, AddonRow[]>
+  /** What the shop calls its add-ons, plural: "Add-ons", "Accessories". */
+  addonNoun: string
+  downloads: Map<string, Array<{ id: string; name: string; mime_type: string; size: number }>>
+  reviews: Map<string, ReviewRow[]>
+  related: Map<string, Array<{ name: string; slug: string }>>
 }
 
 type VariantRow = {
@@ -386,13 +398,49 @@ type VariantRow = {
   sale_price: unknown
   stock_count: number | null
   track_inventory: boolean
+  is_pre_order: boolean
+  out_of_stock_behaviour: string | null
   options: string | null
+  /** Option name -> the value this combination takes for it. */
+  option_map: Record<string, string> | null
 }
+
+type AddonRow = {
+  product_id: string
+  name: string
+  slug: string
+  tax_class_id: string | null
+  price_min: unknown
+  price_max: unknown
+  /** "Width: 120cm, 140cm; Finish: Oak, White" - what is chosen on the add-on. */
+  choices: string | null
+}
+
+type ReviewRow = {
+  product_id: string
+  rating: number
+  title: string | null
+  body: string | null
+  author_name: string | null
+  verified_purchase: boolean
+  published_at: Date | null
+  reply_body: string | null
+}
+
+// The add-on's own price, falling back to the spread across its combinations
+// when the listing row carries none - the same reason productFacts falls back.
+const ADDON_SPREAD_SQL = `
+  SELECT MIN(COALESCE(NULLIF(child."sale_price", 0), NULLIF(child."price", 0))) AS lo,
+         MAX(COALESCE(NULLIF(child."sale_price", 0), NULLIF(child."price", 0))) AS hi
+  FROM "svr_variants" v JOIN "shp_products" child ON child."id" = v."child_product_id"
+  WHERE v."product_id" = a."id" AND v."enabled" = true`
 
 async function loadProductExtras(ids: string[], hasModule: (name: string) => boolean): Promise<ProductExtras> {
   const empty: ProductExtras = {
     categories: new Map(), collections: new Map(), attributes: new Map(),
-    variants: new Map(), modelled: new Set(), photoCounts: new Map(),
+    variants: new Map(), options: new Map(), modelled: new Set(), photoCounts: new Map(),
+    photos: new Map(), addons: new Map(), addonNoun: 'Add-ons', downloads: new Map(),
+    reviews: new Map(), related: new Map(),
   }
   if (ids.length === 0) return empty
 
@@ -417,12 +465,43 @@ async function loadProductExtras(ids: string[], hasModule: (name: string) => boo
   ])
 
   const extras: ProductExtras = {
+    ...empty,
     categories: groupBy(categories, (r) => r.product_id),
     collections: groupBy(collections, (r) => r.product_id),
-    attributes: new Map(),
-    variants: new Map(),
-    modelled: new Set(),
     photoCounts: new Map(photos.map((p) => [p.product_id, Number(p.count)])),
+  }
+
+  // The photographs themselves, not just how many. An assistant asked "what
+  // does it look like" can hand over a picture; one told "7" cannot.
+  try {
+    const rows = await prisma.$queryRaw<Array<{ product_id: string; url: string; alt_text: string | null }>>`
+      SELECT "product_id", "url", "alt_text" FROM "shp_product_media"
+      WHERE "product_id" IN (${Prisma.join(ids)}) AND "type" = 'IMAGE' AND "url" IS NOT NULL AND "url" <> ''
+      ORDER BY "product_id", "is_primary" DESC, "position" ASC
+    `
+    for (const [productId, list] of groupBy(rows, (r) => r.product_id)) {
+      extras.photos.set(productId, list.map((r) => ({ url: r.url, alt: r.alt_text })))
+    }
+  } catch {
+    // A twin without its pictures is still worth more than no twin.
+  }
+
+  // Related products, where the shop has named any. Only live, visible ones -
+  // a link to a draft is a link to a 404.
+  try {
+    const rows = await prisma.$queryRaw<Array<{ product_id: string; name: string; slug: string }>>`
+      SELECT r."product_id", p."name", p."slug" FROM (
+        SELECT "product_id", "related_id" AS other, "position" FROM "shp_related_products"
+        UNION ALL
+        SELECT "product_id", "upsell_id" AS other, "position" + 10000 FROM "shp_upsell_products"
+      ) r
+      JOIN "shp_products" p ON p."id" = r.other
+      WHERE r."product_id" IN (${Prisma.join(ids)}) AND p."status" = 'ACTIVE' AND p."catalogue_hidden" = false
+      ORDER BY r."product_id", r."position" ASC
+    `
+    extras.related = groupBy(rows, (r) => r.product_id)
+  } catch {
+    // As above.
   }
 
   // Variations. A "variation" is a hidden CHILD product row, which is why the
@@ -434,14 +513,21 @@ async function loadProductExtras(ids: string[], hasModule: (name: string) => boo
       const variants = await prisma.$queryRaw<VariantRow[]>`
         SELECT v."product_id" AS parent_id, v."child_product_id" AS child_id,
                child."name", child."sku", child."price", child."sale_price",
-               child."stock_count", child."track_inventory",
+               child."stock_count", child."track_inventory", child."is_pre_order", child."out_of_stock_behaviour",
                (
                  SELECT string_agg(ov."label", ', ' ORDER BY o."position" ASC)
                  FROM "svr_variant_values" vv
                  JOIN "svr_option_values" ov ON ov."id" = vv."option_value_id"
                  JOIN "svr_options" o ON o."id" = ov."option_id"
                  WHERE vv."variant_id" = v."id"
-               ) AS options
+               ) AS options,
+               (
+                 SELECT jsonb_object_agg(o."name", ov."label")
+                 FROM "svr_variant_values" vv
+                 JOIN "svr_option_values" ov ON ov."id" = vv."option_value_id"
+                 JOIN "svr_options" o ON o."id" = ov."option_id"
+                 WHERE vv."variant_id" = v."id"
+               ) AS option_map
         FROM "svr_variants" v
         JOIN "shp_products" child ON child."id" = v."child_product_id"
         WHERE v."product_id" IN (${Prisma.join(ids)}) AND v."enabled" = true
@@ -449,9 +535,103 @@ async function loadProductExtras(ids: string[], hasModule: (name: string) => boo
       `
       extras.variants = groupBy(variants, (v) => v.parent_id)
       childIds = variants.map((v) => v.child_id)
+
+      // The options a shopper is asked, each with the values some live
+      // combination actually takes. A value no enabled combination uses is one
+      // the page will not offer, so it is not one to promise here either.
+      const options = await prisma.$queryRaw<Array<{ product_id: string; option_id: string; name: string; label: string }>>`
+        SELECT o."product_id", o."id" AS option_id, o."name", ov."label"
+        FROM "svr_options" o
+        JOIN "svr_option_values" ov ON ov."option_id" = o."id"
+        WHERE o."product_id" IN (${Prisma.join(ids)})
+          AND EXISTS (
+            SELECT 1 FROM "svr_variant_values" vv
+            JOIN "svr_variants" v ON v."id" = vv."variant_id"
+            WHERE vv."option_value_id" = ov."id" AND v."enabled" = true
+          )
+        ORDER BY o."product_id", o."position" ASC, ov."position" ASC
+      `
+      for (const [productId, rows] of groupBy(options, (r) => r.product_id)) {
+        const list: Array<{ name: string; values: string[] }> = []
+        for (const [, values] of groupBy(rows, (r) => r.option_id)) {
+          list.push({ name: values[0]!.name, values: [...new Set(values.map((v) => v.label))] })
+        }
+        extras.options.set(productId, list)
+      }
     } catch {
       // Module present but mid-migration: a document without its variations is
       // worth more than no document.
+    }
+  }
+
+  if (hasModule('product-addons-for-shop')) {
+    try {
+      const spread = hasModule('shop-variations')
+        ? Prisma.raw(`LEFT JOIN LATERAL (${ADDON_SPREAD_SQL}) s ON true`)
+        : Prisma.raw('LEFT JOIN LATERAL (SELECT NULL::numeric AS lo, NULL::numeric AS hi) s ON true')
+      const choices = hasModule('shop-variations')
+        ? Prisma.raw(`(
+            SELECT string_agg(o."name" || ': ' || (
+              SELECT string_agg(ov."label", ', ' ORDER BY ov."position" ASC)
+              FROM "svr_option_values" ov WHERE ov."option_id" = o."id"
+            ), '; ' ORDER BY o."position" ASC)
+            FROM "svr_options" o WHERE o."product_id" = a."id"
+          )`)
+        : Prisma.raw('NULL::text')
+      // Only live, visible add-ons, exactly as the product page offers them:
+      // a draft or hidden listing drops out there and has to here too.
+      const [rows, noun] = await Promise.all([
+        prisma.$queryRaw<AddonRow[]>`
+          SELECT l."product_id", a."name", a."slug", a."tax_class_id",
+                 COALESCE(NULLIF(COALESCE(NULLIF(a."sale_price", 0), a."price"), 0), s.lo) AS price_min,
+                 COALESCE(NULLIF(COALESCE(NULLIF(a."sale_price", 0), a."price"), 0), s.hi) AS price_max,
+                 ${choices} AS choices
+          FROM "pad_links" l
+          JOIN "shp_products" a ON a."id" = l."addon_product_id"
+          ${spread}
+          WHERE l."product_id" IN (${Prisma.join(ids)}) AND l."enabled" = true
+            AND a."status" = 'ACTIVE' AND a."catalogue_hidden" = false
+          ORDER BY l."product_id", l."position" ASC
+        `,
+        prisma.$queryRaw<Array<{ noun_plural: string | null }>>`
+          SELECT "noun_plural" FROM "pad_settings" WHERE "id" = 'singleton' LIMIT 1
+        `.catch(() => []),
+      ])
+      extras.addons = groupBy(rows, (r) => r.product_id)
+      const plural = noun[0]?.noun_plural?.trim()
+      if (plural) extras.addonNoun = plural
+    } catch {
+      // As above.
+    }
+  }
+
+  if (hasModule('product-downloads-for-shop')) {
+    try {
+      const rows = await prisma.$queryRaw<Array<{ product_id: string; id: string; name: string; mime_type: string; size: number }>>`
+        SELECT "product_id", "id", "name", "mime_type", "size" FROM "pdl_files"
+        WHERE "product_id" IN (${Prisma.join(ids)})
+        ORDER BY "product_id", "position" ASC, "created_at" ASC
+      `
+      extras.downloads = groupBy(rows, (r) => r.product_id)
+    } catch {
+      // As above.
+    }
+  }
+
+  if (hasModule('reviews-for-shop')) {
+    try {
+      // Published reviews only - the ones the page prints, under the name the
+      // page prints. Nothing pending, nothing turned down, no email address.
+      const rows = await prisma.$queryRaw<ReviewRow[]>`
+        SELECT "product_id", "rating", "title", "body", "author_name", "verified_purchase",
+               "published_at", "reply_body"
+        FROM "rvw_reviews"
+        WHERE "product_id" IN (${Prisma.join(ids)}) AND "status" = 'PUBLISHED'
+        ORDER BY "product_id", "published_at" DESC NULLS LAST, "created_at" DESC
+      `
+      extras.reviews = groupBy(rows, (r) => r.product_id)
+    } catch {
+      // As above.
     }
   }
 
@@ -511,31 +691,105 @@ async function loadProductExtras(ids: string[], hasModule: (name: string) => boo
   return extras
 }
 
-// Deliberately capped. A listing with four hundred combinations turns its twin
-// into a wall of table rows that pushes the description out of any context
-// window it lands in, and the first fifty say everything the next three hundred
-// and fifty repeat.
-const MAX_VARIANTS_LISTED = 50
+// Every combination is listed: the exact price of the exact thing a shopper is
+// about to choose is the question an assistant is most often asked, and "139
+// further combinations are on the page" answered it for none of them. The cap
+// is only a guard against a runaway listing - at one short table row each, a
+// thousand combinations is still well under a hundred kilobytes.
+const MAX_VARIANTS_LISTED = 1000
+const MAX_PHOTOS_LISTED = 30
+const MAX_REVIEWS_LISTED = 20
+
+/** What a combination's stock means to somebody wanting one. */
+function variantStock(v: VariantRow): string {
+  if (v.is_pre_order) return 'Pre-order'
+  if (!v.track_inventory) return 'Made to order'
+  const stock = v.stock_count ?? 0
+  if (stock > 0) return String(stock)
+  return v.out_of_stock_behaviour === 'BACKORDER' ? 'On backorder' : 'Out of stock'
+}
+
+/** A price, with the figure it was reduced from where there is one. */
+function priceWithWas(row: { price: unknown; sale_price: unknown }, taxClassId: string | null, money: PriceView): string {
+  const now = effectivePrice(row)
+  if (now === null) return ''
+  const list = decimalToNumber(row.price)
+  const sale = decimalToNumber(row.sale_price)
+  if (sale !== null && sale > 0 && list !== null && list > sale) {
+    return `${money.format(sale, taxClassId)} (was ${money.format(list, taxClassId)})`
+  }
+  return money.format(now, taxClassId)
+}
+
+function formatBytes(size: number): string {
+  if (!size || size <= 0) return ''
+  if (size < 1024 * 1024) return `${Math.max(1, Math.round(size / 1024))} KB`
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function fileKind(mime: string): string {
+  if (mime === 'application/pdf') return 'PDF'
+  if (mime.startsWith('image/')) return 'Image'
+  if (mime.includes('wordprocessingml') || mime === 'application/msword') return 'Word document'
+  if (mime.includes('spreadsheetml') || mime === 'application/vnd.ms-excel') return 'Spreadsheet'
+  if (mime.includes('zip')) return 'ZIP archive'
+  return ''
+}
 
 function productSections(
   product: ProductRow,
   extras: ProductExtras,
   money: PriceView,
+  delivery: ProductDeliverySummary | null,
+  productPath: (slug: string) => string,
 ): DocumentSection[] {
   const sections: DocumentSection[] = []
 
   const body = bodyMarkdown(product.description_puck, product.description)
+  // The short description is the line under the price on the page. Printed
+  // where the long copy does not already open with it, so it is said once.
+  const short = product.short_description ? bodyMarkdown(null, product.short_description).trim() : ''
+  const flat = (text: string) => text.replace(/[^a-z0-9]+/gi, ' ').trim().toLowerCase()
+  if (short && !flat(body).includes(flat(short).slice(0, 120))) {
+    sections.push({ heading: 'Overview', body: short })
+  }
   if (body) sections.push({ heading: 'Description', body })
+
+  const options = extras.options.get(product.id) ?? []
+  if (options.length > 0) {
+    sections.push({
+      heading: 'Options',
+      body: [
+        'Choose one value for each of these before adding the product to the basket. Each combination has its own SKU and price, listed under Variations below.',
+        bulletList(options.map((o) => `**${o.name}**: ${o.values.join(', ')}`)),
+      ].join('\n\n'),
+    })
+  }
 
   const variants = extras.variants.get(product.id) ?? []
   if (variants.length > 0) {
+    // One column per option, in the order the page asks them, where every
+    // combination can be split that way; the joined label otherwise.
+    const optionNames = options.map((o) => o.name)
+    const split = optionNames.length > 0 && variants.every((v) => v.option_map && optionNames.every((n) => n in v.option_map!))
+    // A column per delivery service whose charge depends on the combination,
+    // so "how much is installation on the six-person one" has an answer.
+    const deliveryColumns = delivery?.varying ?? []
+    const deliveryCell = (childId: string, key: string): string => {
+      const charges = delivery?.perChild.get(childId)
+      if (!charges) return ''
+      const price = charges.get(key)
+      if (price === undefined) return 'Not available'
+      return price === 0 ? 'Free' : money.format(price, product.tax_class_id)
+    }
     const rows = variants.slice(0, MAX_VARIANTS_LISTED).map((v) => [
-      v.options?.trim() || v.name,
+      ...(split ? optionNames.map((n) => v.option_map![n] ?? '') : [v.options?.trim() || v.name]),
       v.sku ?? '',
       // The listing's tax class, not the child's: a combination is the same
       // goods in a different colour, and the shop charges it accordingly.
-      money.format(effectivePrice(v), product.tax_class_id),
-      v.track_inventory ? String(v.stock_count ?? 0) : 'Made to order',
+      priceWithWas(v, product.tax_class_id, money),
+      ...deliveryColumns.map((c) => deliveryCell(v.child_id, c.key)),
+      variantStock(v),
       extras.modelled.has(v.child_id) ? 'Yes' : 'No',
     ])
     const more = variants.length > MAX_VARIANTS_LISTED
@@ -543,7 +797,28 @@ function productSections(
       : ''
     sections.push({
       heading: 'Variations',
-      body: `${table(['Choice', 'SKU', 'Price', 'Stock', '3D model'], rows)}${more}`,
+      body: `${variants.length} combination${variants.length === 1 ? '' : 's'}. Stock is the number available now${deliveryColumns.length ? '; delivery columns are the per-item charge for that service on that combination' : ''}.\n\n${table([...(split ? optionNames : ['Choice']), 'SKU', 'Price', ...deliveryColumns.map((c) => c.label), 'Stock', '3D model'], rows)}${more}`,
+    })
+  }
+
+  const deliveryBody = delivery ? deliveryMarkdown(delivery, product.tax_class_id, money) : ''
+  if (deliveryBody) sections.push({ heading: 'Delivery', body: deliveryBody })
+
+  const addons = extras.addons.get(product.id) ?? []
+  if (addons.length > 0) {
+    const rows = addons.map((a) => {
+      const lo = decimalToNumber(a.price_min)
+      const hi = decimalToNumber(a.price_max)
+      const price = lo === null
+        ? 'On the page'
+        : hi !== null && hi !== lo
+          ? `${money.format(lo, a.tax_class_id)} to ${money.format(hi, a.tax_class_id)}`
+          : money.format(lo, a.tax_class_id)
+      return [link(a.name, `/${productPath(a.slug)}`), price, a.choices ?? '']
+    })
+    sections.push({
+      heading: extras.addonNoun,
+      body: `Optional extras that can be added to the basket from this product's page, each priced on top of the product itself.\n\n${table(['Item', 'Price', 'Choices'], rows)}`,
     })
   }
 
@@ -573,6 +848,58 @@ function productSections(
   ].filter(Boolean)
   if (physical.length) sections.push({ heading: 'Size and weight', body: bulletList(physical) })
 
+  const reviews = extras.reviews.get(product.id) ?? []
+  if (reviews.length > 0) {
+    const average = reviews.reduce((n, r) => n + r.rating, 0) / reviews.length
+    const listed = reviews.slice(0, MAX_REVIEWS_LISTED).map((r) => {
+      const head = [
+        `${r.rating} out of 5`,
+        r.title?.trim() ? `**${r.title.trim()}**` : '',
+      ].filter(Boolean).join(' - ')
+      const by = [
+        r.author_name?.trim() ? r.author_name.trim() : '',
+        r.verified_purchase ? 'verified purchase' : '',
+        r.published_at ? r.published_at.toISOString().slice(0, 10) : '',
+      ].filter(Boolean).join(', ')
+      const reply = r.reply_body?.trim() ? `\n\n  Reply from the shop: ${r.reply_body.trim().replace(/\s+/g, ' ')}` : ''
+      return `- ${head}${by ? ` (${by})` : ''}${r.body?.trim() ? `\n\n  ${r.body.trim().replace(/\s+/g, ' ')}` : ''}${reply}`
+    })
+    sections.push({
+      heading: 'Customer reviews',
+      body: `Rated ${average.toFixed(1)} out of 5 from ${reviews.length} review${reviews.length === 1 ? '' : 's'}.\n\n${listed.join('\n')}`,
+    })
+  }
+
+  const downloads = extras.downloads.get(product.id) ?? []
+  if (downloads.length > 0) {
+    sections.push({
+      heading: 'Downloads',
+      body: bulletList(downloads.map((d) => {
+        const about = [fileKind(d.mime_type), formatBytes(d.size)].filter(Boolean).join(', ')
+        return `${link(d.name, `/api/m/product-downloads-for-shop/public/files/${d.id}`)}${about ? ` (${about})` : ''}`
+      })),
+    })
+  }
+
+  const photos = extras.photos.get(product.id) ?? []
+  if (photos.length > 0) {
+    sections.push({
+      heading: 'Photographs',
+      body: bulletList(photos.slice(0, MAX_PHOTOS_LISTED).map((p, i) => {
+        const alt = p.alt?.trim().replace(/[[\]]/g, '') || `Photograph ${i + 1}`
+        return `![${alt}](${p.url})`
+      })),
+    })
+  }
+
+  const related = extras.related.get(product.id) ?? []
+  if (related.length > 0) {
+    sections.push({
+      heading: 'Related products',
+      body: bulletList(related.map((r) => link(r.name, `/${productPath(r.slug)}`))),
+    })
+  }
+
   const categories = extras.categories.get(product.id) ?? []
   const collections = extras.collections.get(product.id) ?? []
   if (categories.length || collections.length) {
@@ -586,6 +913,229 @@ function productSections(
   }
 
   return sections
+}
+
+// ---------------------------------------------------------------------------
+// Delivery
+// ---------------------------------------------------------------------------
+
+/** One delivery choice as the twin prints it. */
+type DeliveryLine = {
+  label: string
+  description: string | null
+  /** Cheapest and dearest across the combinations that offer it. Null = no figure. */
+  lo: number | null
+  hi: number | null
+  /** True when charged on every unit rather than once per order. */
+  perUnit: boolean
+  /** Whether the figure is converted on the product's own tax class. */
+  productTax: boolean
+  daysLo: number | null
+  daysHi: number | null
+  /** Anything else worth a sentence: an estimate in the shop's own words. */
+  note: string | null
+  /** Order value above which this rate is free, where the shop sets one. */
+  freeOver?: number | null
+}
+
+type ProductDeliverySummary = {
+  lines: DeliveryLine[]
+  /** Services whose price differs between combinations, or that only some of
+   *  them carry, in the order they are listed. Each gets a column of its own in
+   *  the variations table, so the charge for the exact combination is there. */
+  varying: Array<{ key: string; label: string }>
+  /** Combination id -> service key -> its per-item charge. */
+  perChild: Map<string, Map<string, number>>
+}
+
+type TimingOption = { key: string; label: string; description: string | null; price: number; handlingDays: number; transitDays: number }
+
+/**
+ * Per-product delivery services, from whichever module publishes them at
+ * `shop.product-delivery-timing`. Read through core's registry rather than
+ * imported: this module has to build identically on a shop with no delivery
+ * module at all, and there the point is simply empty.
+ *
+ * Checked rather than trusted - it crosses a registry seam with no shared
+ * types - and one malformed option is dropped on its own.
+ */
+async function deliveryTiming(productIds: string[]): Promise<Map<string, TimingOption[]> | null> {
+  // The SERVER map, reached with a dynamic import rather than a static one: the
+  // registry imports this module's own agent-content provider, which leads back
+  // here through llms-txt.ts, and a static edge closes that loop. See
+  // scripts/check-import-cycles.mjs in core.
+  const { moduleServerExtensionPointComponents } = await import('@/lib/modules/extension-points.server')
+  const registered = (moduleServerExtensionPointComponents as Record<string, Record<string, unknown> | undefined>)['shop.product-delivery-timing'] ?? {}
+  const provider = Object.values(registered).find((entry): entry is (ids: string[]) => Promise<unknown> => typeof entry === 'function')
+  if (!provider) return null
+  const out = new Map<string, TimingOption[]>()
+  if (productIds.length === 0) return out
+  try {
+    const answered = await provider(productIds)
+    if (!(answered instanceof Map)) return out
+    for (const [productId, value] of answered) {
+      if (typeof productId !== 'string' || typeof value !== 'object' || value === null) continue
+      const options: TimingOption[] = []
+      for (const raw of Array.isArray((value as { options?: unknown }).options) ? (value as { options: unknown[] }).options : []) {
+        if (typeof raw !== 'object' || raw === null) continue
+        const o = raw as Record<string, unknown>
+        const days = (n: unknown) => (typeof n === 'number' && Number.isFinite(n) && n >= 0 ? n : null)
+        const key = typeof o.key === 'string' ? o.key : ''
+        const label = typeof o.label === 'string' ? o.label.trim() : ''
+        const price = typeof o.price === 'number' && Number.isFinite(o.price) && o.price >= 0 ? o.price : null
+        const handling = days(o.handlingDays)
+        const transit = days(o.transitDays)
+        if (!key || !label || price === null || handling === null || transit === null) continue
+        options.push({
+          key, label, price, handlingDays: handling, transitDays: transit,
+          description: typeof o.description === 'string' && o.description.trim() ? o.description.trim() : null,
+        })
+      }
+      if (options.length) out.set(productId, options)
+    }
+  } catch (err) {
+    // Delivery is worth a section, not the document.
+    console.error('[ultimate-seo] delivery timing unavailable for the twin', err)
+  }
+  return out
+}
+
+/**
+ * A listing's delivery choices, across whatever a shopper can actually buy.
+ *
+ * Read from the combinations where it has any - they are what goes in the
+ * basket, and a service whose price depends on the size chosen is quoted as
+ * the spread rather than as whichever one happened to be asked first - and
+ * from the listing itself where it has none, or where none of them answered.
+ */
+function summariseDelivery(
+  parentId: string,
+  childIds: string[],
+  timing: Map<string, TimingOption[]>,
+): ProductDeliverySummary | null {
+  const answering = childIds.filter((id) => timing.has(id))
+  const sources = answering.length ? answering : timing.has(parentId) ? [parentId] : []
+  if (sources.length === 0) return null
+
+  const byKey = new Map<string, DeliveryLine>()
+  for (const id of sources) {
+    for (const o of timing.get(id) ?? []) {
+      const total = o.handlingDays + o.transitDays
+      const line = byKey.get(o.key)
+      if (!line) {
+        byKey.set(o.key, {
+          label: o.label, description: o.description, lo: o.price, hi: o.price,
+          perUnit: true, productTax: true, daysLo: total, daysHi: total, note: null,
+        })
+        continue
+      }
+      line.lo = Math.min(line.lo ?? o.price, o.price)
+      line.hi = Math.max(line.hi ?? o.price, o.price)
+      line.daysLo = Math.min(line.daysLo ?? total, total)
+      line.daysHi = Math.max(line.daysHi ?? total, total)
+    }
+  }
+  const lines = [...byKey.values()]
+  const perChild = new Map<string, Map<string, number>>()
+  const varying: Array<{ key: string; label: string }> = []
+  if (answering.length > 1) {
+    for (const id of answering) perChild.set(id, new Map((timing.get(id) ?? []).map((o) => [o.key, o.price])))
+    for (const [key, line] of byKey) {
+      const everywhere = answering.every((id) => perChild.get(id)!.has(key))
+      if (line.lo !== line.hi || !everywhere) varying.push({ key, label: line.label })
+    }
+  }
+  // Where only some combinations carry a service, say so: "available" on a
+  // listing where the shopper's chosen size cannot have it is a promise broken
+  // at the basket.
+  if (sources.length > 1) {
+    for (const [key, line] of byKey) {
+      const carrying = sources.filter((id) => (timing.get(id) ?? []).some((o) => o.key === key)).length
+      if (carrying < sources.length) line.note = `Available on ${carrying} of ${sources.length} combinations.`
+    }
+  }
+  return { lines, varying, perChild }
+}
+
+type ShopRateRow = { name: string; type: string; flat_rate: unknown; free_threshold: unknown; estimated_days: string | null }
+
+/**
+ * The shop's own shipping rates, for a shop with no per-product delivery
+ * module. Charged per ORDER, from the catch-all zone - the same zone the
+ * catalogue prices are worked out against.
+ */
+async function shopShippingRates(): Promise<ProductDeliverySummary | null> {
+  try {
+    const zones = await prisma.$queryRaw<Array<{ id: string; postcodes: unknown }>>`
+      SELECT "id", "postcodes" FROM "shp_shipping_zones" ORDER BY "name" ASC
+    `
+    const zone = zones.find((z) => Array.isArray(z.postcodes) && z.postcodes.length === 0) ?? zones[0]
+    if (!zone) return null
+    const rates = await prisma.$queryRaw<ShopRateRow[]>`
+      SELECT "name", "type", "flat_rate", "free_threshold", "estimated_days"
+      FROM "shp_shipping_rates" WHERE "zone_id" = ${zone.id} AND "is_active" = true
+      ORDER BY "position" ASC, "name" ASC
+    `
+    if (rates.length === 0) return null
+    return {
+      lines: rates.map((r) => {
+        const flat = r.type === 'FREE' ? 0 : r.type === 'FLAT' ? decimalToNumber(r.flat_rate) : null
+        const threshold = decimalToNumber(r.free_threshold)
+        const notes = [
+          r.type === 'WEIGHT_BASED' ? 'Priced by the weight of the order, worked out at checkout.' : '',
+          r.estimated_days?.trim() ? `Estimated ${r.estimated_days.trim()}${/day/i.test(r.estimated_days) ? '' : ' days'}.` : '',
+        ].filter(Boolean)
+        return {
+          label: r.name, description: null, lo: flat, hi: flat, perUnit: false, productTax: false,
+          daysLo: null, daysHi: null, note: notes.join(' ') || null,
+          freeOver: threshold !== null && threshold > 0 ? threshold : null,
+        }
+      }),
+      varying: [],
+      perChild: new Map(),
+    }
+  } catch {
+    return null
+  }
+}
+
+function deliveryMarkdown(summary: ProductDeliverySummary, taxClassId: string | null, money: PriceView): string {
+  if (summary.lines.length === 0) return ''
+  const fmt = (n: number, line: DeliveryLine) => money.format(n, line.productTax ? taxClassId : null)
+  const rows = summary.lines.map((line) => {
+    let price = 'Worked out at checkout'
+    if (line.lo !== null && line.hi !== null) {
+      if (line.hi === 0) price = 'Free'
+      else {
+        const unit = line.perUnit ? ' per item' : ' per order'
+        price = line.lo === line.hi
+          ? `${fmt(line.lo, line)}${unit}`
+          : `${line.lo === 0 ? 'Free' : fmt(line.lo, line)} to ${fmt(line.hi, line)}${unit}, by combination`
+      }
+    }
+    const days = line.daysLo === null || line.daysHi === null
+      ? ''
+      : line.daysLo === line.daysHi
+        ? `${line.daysHi} working day${line.daysHi === 1 ? '' : 's'}`
+        : `${line.daysLo} to ${line.daysHi} working days`
+    const freeOver = line.freeOver ? `Free on orders over ${money.format(line.freeOver, null)}.` : ''
+    return [line.label, price, days, [line.description ?? '', freeOver, line.note ?? ''].filter(Boolean).join(' ')]
+  })
+  const anyDays = rows.some((r) => r[2])
+  const headers = anyDays ? ['Service', 'Price', 'Delivery time', 'Details'] : ['Service', 'Price', 'Details']
+  const body = table(headers, anyDays ? rows : rows.map((r) => [r[0]!, r[1]!, r[3]!]))
+  const notes = [
+    summary.lines.some((l) => l.perUnit && (l.hi ?? 0) > 0)
+      ? 'Charges marked per item apply to every unit: two of the same product is twice the charge.'
+      : '',
+    summary.varying.length
+      ? `The charge for each combination is in the Variations table${summary.varying.length === 1 ? '' : ', one column per service'}.`
+      : '',
+    anyDays
+      ? 'Delivery times are working days from the order, with weekends and public holidays not counted. The product page and checkout show the exact date before payment.'
+      : '',
+  ].filter(Boolean).join(' ')
+  return notes ? `${body}\n\n${notes}` : body
 }
 
 /** What a variant actually sells for: its sale price if it has one, else its price. */
@@ -634,6 +1184,19 @@ function productFacts(
   }
 
   if (product.sku) facts.push({ label: 'SKU', value: product.sku })
+  // The same identifier the page's own structured data publishes as its GTIN.
+  if (product.barcode?.trim()) facts.push({ label: 'GTIN', value: product.barcode.trim() })
+
+  const reviews = extras.reviews.get(product.id) ?? []
+  if (reviews.length > 0) {
+    const average = reviews.reduce((n, r) => n + r.rating, 0) / reviews.length
+    facts.push({ label: 'Rating', value: `${average.toFixed(1)} out of 5 (${reviews.length} review${reviews.length === 1 ? '' : 's'})` })
+  }
+
+  const options = extras.options.get(product.id) ?? []
+  if (options.length > 0) {
+    facts.push({ label: 'Options', value: options.map((o) => `${o.name} (${o.values.length})`).join(', ') })
+  }
 
   const variantStock = variants.reduce((n, v) => n + (v.track_inventory ? (v.stock_count ?? 0) : 0), 0)
   const anyVariantMadeToOrder = variants.some((v) => !v.track_inventory)
@@ -1132,6 +1695,17 @@ export async function buildDocuments(items: InventoryItem[], ctx: BuildContext):
       categoryTree().catch(() => new Map()),
     ])
     const byId = new Map(rows.map((r) => [r.id, r]))
+
+    // Delivery for the listings AND their combinations, in one ask: a listing
+    // whose delivery is set on its variations answers nothing on its own.
+    const childIds = [...extras.variants.values()].flat().map((v) => v.child_id)
+    const timing = await deliveryTiming([...ids, ...childIds])
+    // Only a shop with no per-product delivery module falls back to its own
+    // order-level rates. Where one IS installed and a product is absent from its
+    // answer, the honest thing to print is nothing.
+    const shopRates = timing === null ? await shopShippingRates() : null
+    const productPath = (slug: string) => (ctx.productsAtRoot ? slug : `shop/products/${slug}`)
+
     for (const item of products) {
       const product = byId.get(item.entityId)
       if (!product) continue
@@ -1140,10 +1714,13 @@ export async function buildDocuments(items: InventoryItem[], ctx: BuildContext):
       // uses for its own heading.
       const categoryId = product.master_category_id ?? extras.categories.get(product.id)?.[0]?.id ?? null
       const trail = categoryId ? categoryTrail(categoryId, tree) : [HOME]
+      const delivery = timing
+        ? summariseDelivery(product.id, (extras.variants.get(product.id) ?? []).map((v) => v.child_id), timing)
+        : shopRates
       compose(
         item,
         [
-          ...productSections(product, extras, money),
+          ...productSections(product, extras, money, delivery, productPath),
           ...faqSections(faqs, { own: faqs.products.get(product.id), categoryId, tree }),
         ],
         productFacts(product, extras, money, ctx.publishSupplier),

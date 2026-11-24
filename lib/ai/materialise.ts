@@ -8,7 +8,8 @@
 import { getInventory, getActiveModuleNames, gazettePostsAtRoot, shopProductsAtRoot } from '../inventory'
 import { getAiSettings } from '../settings'
 import type { EntityType, InventoryItem } from '../types'
-import { getAbstracts, listDocumentFingerprints, pruneDocuments, upsertDocuments } from './db'
+import { getAbstracts, listDocumentFingerprints, listProductTwinsWithStaleDependencies, pruneDocuments, upsertDocuments, type DocumentFingerprint } from './db'
+import { DOCUMENT_BUILDER_REVISION } from './builder-revision'
 import { buildDocuments } from './documents'
 
 export type RebuildResult = {
@@ -75,8 +76,11 @@ export async function rebuildLlmDocuments(options?: { types?: EntityType[]; forc
     getAbstracts(),
     shopProductsAtRoot(),
     gazettePostsAtRoot(),
-    options?.force ? Promise.resolve(new Map<string, number | null>()) : listDocumentFingerprints(),
+    options?.force ? Promise.resolve(new Map<string, DocumentFingerprint>()) : listDocumentFingerprints(),
   ])
+  const staleDependencies = options?.force
+    ? new Set<string>()
+    : await listProductTwinsWithStaleDependencies((name) => moduleNames.has(name))
 
   const items = inventory.filter((item) => wanted.has(item.entityType) && isPublic(item))
 
@@ -84,8 +88,13 @@ export async function rebuildLlmDocuments(options?: { types?: EntityType[]; forc
   // counts as present, so the prune below does not delete it.
   const stale = items.filter((item) => {
     const key = `${item.entityType}:${item.entityId}`
-    if (!fingerprints.has(key)) return true
-    const built = fingerprints.get(key) ?? null
+    const fingerprint = fingerprints.get(key)
+    if (!fingerprint) return true
+    // Written by an older builder: stale whatever the content has done, or an
+    // install goes on serving twins from code it no longer runs.
+    if (fingerprint.revision < DOCUMENT_BUILDER_REVISION) return true
+    if (item.entityType === 'shop-product' && staleDependencies.has(item.entityId)) return true
+    const built = fingerprint.source
     const source = item.updatedAt ? Date.parse(item.updatedAt) : null
     // Either side unknown means "cannot tell", and cannot tell means rebuild.
     if (built === null || source === null) return true
